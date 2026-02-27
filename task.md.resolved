@@ -1,0 +1,63 @@
+# Post-Refactor Full Project Analysis — Task List
+
+## 🔴 CRITICAL (will break Docker build or startup)
+
+- [x] **TASK 1 — [Dockerfile.backend](file:///v:/PlayGround/Automated_Framework/Dockerfile.backend) CMD is broken** ✅ (fixed by user)
+  - Updated to: `gunicorn ... backend.app:create_app --factory`
+
+- [x] **TASK 2 — [alembic/env.py](file:///v:/PlayGround/Automated_Framework/alembic/env.py) imports are broken after refactor** ✅
+  - `sys.path` now points to project root (not [backend/](file:///v:/PlayGround/Automated_Framework/Dockerfile.backend))
+  - Import updated to `from backend.database.models import Base`
+  - Verified: import resolves cleanly in venv
+
+- [x] **TASK 3 — `PYTHONPATH` not set in Dockerfile** ✅ (fixed by user)
+  - `ENV PYTHONPATH=/app` added to [Dockerfile.backend](file:///v:/PlayGround/Automated_Framework/Dockerfile.backend)
+
+---
+
+## 🟠 HIGH (logic/data bugs)
+
+- [ ] **TASK 4 — [frontend/src/services/api.js](file:///v:/PlayGround/Automated_Framework/frontend/src/services/api.js) is missing `getStats()` method**
+  - The new `/api/stats` endpoint exists on the backend but frontend has no method to call it
+  - [Dashboard.jsx](file:///v:/PlayGround/Automated_Framework/frontend/src/pages/Dashboard.jsx) manually computes stats from a full deployment list (expensive + inaccurate)
+  - Fix: add `async getStats()` to [api.js](file:///v:/PlayGround/Automated_Framework/frontend/src/services/api.js); update [Dashboard.jsx](file:///v:/PlayGround/Automated_Framework/frontend/src/pages/Dashboard.jsx) to use `api.getStats()`
+
+- [ ] **TASK 5 — [Dashboard.jsx](file:///v:/PlayGround/Automated_Framework/frontend/src/pages/Dashboard.jsx) stats calculation is wrong**
+  - `totalApplications` is computed as `deployments.length` — should be the count of *applications*, not deployments
+  - `runningInstances` filters by `i.state === 'running'` but the merged API response uses `aws_state` (not [state](file:///v:/PlayGround/Automated_Framework/backend/api/instances.py#80-124)) for live AWS data
+  - Fix: switch Dashboard to use `api.getStats()` which returns pre-computed correct counts
+
+- [ ] **TASK 6 — [backend/database/__init__.py](file:///v:/PlayGround/Automated_Framework/backend/database/__init__.py) re-exports may need updating**
+  - The [__init__.py](file:///v:/PlayGround/Automated_Framework/backend/__init__.py) still re-exports from `.models`, `.repositories`, `.connection`
+  - Verify these still resolve correctly now that the package is nested under [backend/](file:///v:/PlayGround/Automated_Framework/Dockerfile.backend)
+
+---
+
+## 🟡 MEDIUM (will cause deployment to fail at runtime or inconsistent behaviour)
+
+- [ ] **TASK 7 — [docker-compose.yml](file:///v:/PlayGround/Automated_Framework/docker-compose.yml) backend service has no SSH key volume mount**
+  - [Dockerfile.backend](file:///v:/PlayGround/Automated_Framework/Dockerfile.backend) line 33: `COPY backend/ml-deploy-key.pem ./backend/ml-deploy-key.pem`
+  - The [.pem](file:///v:/PlayGround/Automated_Framework/backend/ml-deploy-key.pem) key is baked into the image at build time — this means it must exist at build time
+  - If the key is rotated, image must be rebuilt; a named volume or secret would be better practice
+  - Evaluate: add `volumes:` mount in [docker-compose.yml](file:///v:/PlayGround/Automated_Framework/docker-compose.yml) for the key file (or use Docker secrets)
+
+- [ ] **TASK 8 — [smoke_test.py](file:///v:/PlayGround/Automated_Framework/smoke_test.py) left in project root**
+  - Temporary file from refactor verification, should be removed or moved to `tests/`
+
+---
+
+## 🟢 LOW / VERIFIED CLEAN
+
+- [x] [nginx/frontend.conf](file:///v:/PlayGround/Automated_Framework/nginx/frontend.conf) — correct proxy for `/api/` and `/socket.io/`, SPA fallback in place ✅
+- [x] [Dockerfile.frontend](file:///v:/PlayGround/Automated_Framework/Dockerfile.frontend) — multi-stage build, clean ✅
+- [x] [frontend/src/services/socket.js](file:///v:/PlayGround/Automated_Framework/frontend/src/services/socket.js) — correct, matches backend SocketIO event names ✅
+- [x] [frontend/src/services/api.js](file:///v:/PlayGround/Automated_Framework/frontend/src/services/api.js) — all route paths match new Blueprint URLs ✅ (except missing `getStats`)
+- [x] [frontend/src/pages/Deploy.jsx](file:///v:/PlayGround/Automated_Framework/frontend/src/pages/Deploy.jsx) — clean ✅
+- [x] [frontend/src/pages/Instances.jsx](file:///v:/PlayGround/Automated_Framework/frontend/src/pages/Instances.jsx) — clean ✅
+- [x] [frontend/src/hooks/useToast.js](file:///v:/PlayGround/Automated_Framework/frontend/src/hooks/useToast.js) — clean ✅
+- [x] [frontend/src/utils/constants.js](file:///v:/PlayGround/Automated_Framework/frontend/src/utils/constants.js) — clean, `VITE_API_URL` fallback correct ✅
+- [x] [requirements.txt](file:///v:/PlayGround/Automated_Framework/requirements.txt) — all packages present, versions pinned ✅
+- [x] [docker-compose.yml](file:///v:/PlayGround/Automated_Framework/docker-compose.yml) — correct service names, health checks, network ✅ (except Gunicorn CMD is in Dockerfile)
+- [x] Backend Blueprint routes all match [api.js](file:///v:/PlayGround/Automated_Framework/frontend/src/services/api.js) calls ✅
+- [x] [backend/__init__.py](file:///v:/PlayGround/Automated_Framework/backend/__init__.py) — exports `socketio` correctly ✅
+- [x] All 12 module imports verified clean (smoke test passed) ✅

@@ -1,0 +1,61 @@
+@import "tailwindcss";
+
+@theme {
+    --color-background: 240 10% 3.9%;
+    --color-foreground: 0 0% 98%;
+    --color-card: 240 10% 3.9%;
+    --color-card-foreground: 0 0% 98%;
+    --color-popover: 240 10% 3.9%;
+    --color-popover-foreground: 0 0% 98%;
+    --color-primary: 0 0% 98%;
+    --color-primary-foreground: 240 5.9% 10%;
+    --color-secondary: 240 3.7% 15.9%;
+    --color-secondary-foreground: 0 0% 98%;
+    --color-muted: 240 3.7% 15.9%;
+    --color-muted-foreground: 240 5% 64.9%;
+    --color-accent: 240 3.7% 15.9%;
+    --color-accent-foreground: 0 0% 98%;
+    --color-destructive: 0 62.8% 30.6%;
+    --color-destructive-foreground: 0 0% 98%;
+    --color-border: 240 3.7% 15.9%;
+    --color-input: 240 3.7% 15.9%;
+    --color-ring: 240 4.9% 83.9%;
+    --radius: 0.5rem;
+}
+
+/* Custom scrollbar for dark theme */
+.scrollbar-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-track {
+    @apply bg-secondary;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply bg-muted-foreground/30 rounded-md;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground/50;
+}
+/* Toast animations */
+@keyframes slide-in-from-right {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.animate-in {
+  animation-fill-mode: both;
+}
+
+.slide-in-from-right-full {
+  animation: slide-in-from-right 0.3s ease-out;
+}

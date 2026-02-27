@@ -1,0 +1,109 @@
+# ============================================================
+# ML Deployment Platform - Production Safe .gitignore
+# ============================================================
+
+# ------------------------------------------------------------
+# Python
+# ------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*$py.class
+*.so
+
+# Distribution / packaging
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+wheels/
+*.egg-info/
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# Pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs
+*.log
+logs/
+deployment_logs/
+backend/deployment_logs/     # nested deployment log folder
+
+# ------------------------------------------------------------
+# Environment Variables
+# ------------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# ------------------------------------------------------------
+# Secrets & Keys (CRITICAL)
+# ------------------------------------------------------------
+*.pem
+*.key
+*.crt
+backend/*.pem
+aws_credentials.json
+
+# ------------------------------------------------------------
+# Node / Frontend
+# ------------------------------------------------------------
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+frontend/.vite/
+frontend/.cache/
+
+# Frontend environment files
+frontend/.env.local
+frontend/.env.production
+
+# Keep lock file (DO NOT IGNORE)
+# frontend/package-lock.json   <-- intentionally NOT ignored
+
+# ------------------------------------------------------------
+# Docker
+# ------------------------------------------------------------
+docker-compose.override.yml
+*.tar
+*.gz
+
+# ------------------------------------------------------------
+# Database
+# ------------------------------------------------------------
+*.sqlite
+*.sqlite3
+*.db
+
+# ------------------------------------------------------------
+# OS
+# ------------------------------------------------------------
+.DS_Store
+Thumbs.db
+
+# ------------------------------------------------------------
+# IDE / Editor
+# ------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ------------------------------------------------------------
+# Misc
+# ------------------------------------------------------------
+tmp/
+temp/
+*.resolved                   # generated task resolution artefacts (e.g. task.md.resolved)

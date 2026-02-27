@@ -1,0 +1,46 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# SQLite dev database (PostgreSQL is used in containers)
+backend/deployment_platform.db
+deployment_platform.db
+
+# Logs
+backend/deployment.log
+backend/deployment_logs/
+*.log
+
+# Node / Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Git
+.git/
+.gitignore
+
+# Tests
+tests/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets — these are passed via docker-compose environment, not baked into image
+# .env is intentionally NOT excluded — it is copied into backend image
+# so alembic can read DATABASE_URL during migration

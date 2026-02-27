@@ -1,0 +1,124 @@
+# ============================================================
+# Docker Phase 3 — Full Stack
+# Frontend (nginx) + Backend (Flask) + PostgreSQL
+# Everything runs in Docker. Nothing needs to run locally.
+# ============================================================
+#
+# Start everything:  docker compose up --build
+# Stop everything:   docker compose down
+# Rebuild one:       docker compose up --build backend
+# View logs:         docker compose logs -f backend
+# ============================================================
+
+services:
+
+  # ─────────────────────────────────────────────────────────
+  # 1. PostgreSQL Database
+  # ─────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: autodeploy_postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: dbadmin
+      POSTGRES_PASSWORD: AutoDeploy123
+      POSTGRES_DB: autodeploy
+
+    ports:
+      - "5432:5432"     # exposed so you can still connect from host (psql CLI, pgAdmin)
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dbadmin -d autodeploy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+    networks:
+      - app_network
+
+
+  # ─────────────────────────────────────────────────────────
+  # 2. Flask Backend
+  # ─────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: autodeploy_backend
+    restart: unless-stopped
+
+    environment:
+      # ⚠️ CRITICAL: use service name "postgres" NOT "localhost"
+      # Inside Docker, localhost = the backend container itself
+      # "postgres" = the postgres service on the shared Docker network
+      DATABASE_URL: postgresql://dbadmin:AutoDeploy123@postgres:5432/autodeploy
+
+      # Flask settings
+      FLASK_ENV: development
+      APP_PORT: "5000"
+
+      # AWS credentials (passed through from host .env)
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_REGION}
+      AWS_KEY_PAIR_NAME: ${AWS_KEY_PAIR_NAME}
+      EC2_AMI_ID: ${EC2_AMI_ID}
+      EC2_INSTANCE_TYPE: ${EC2_INSTANCE_TYPE}
+      EC2_VOLUME_SIZE: ${EC2_VOLUME_SIZE}
+      SECURITY_GROUP_NAME: ${SECURITY_GROUP_NAME}
+      SECRET_KEY: ${SECRET_KEY}
+
+    ports:
+      - "5000:5000"     # exposed so browser can reach API directly if needed
+
+    depends_on:
+      postgres:
+        condition: service_healthy   # wait for postgres to be ready before starting
+
+    volumes:
+      - ./backend/ml-deploy-key.pem:/app/backend/ml-deploy-key.pem:ro
+      
+    networks:
+      - app_network
+
+
+  # ─────────────────────────────────────────────────────────
+  # 3. React Frontend (nginx)
+  # ─────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: autodeploy_frontend
+    restart: unless-stopped
+
+    ports:
+      - "80:80"         # access the app at http://localhost (no port number needed)
+
+    depends_on:
+      - backend         # nginx proxies /api/* to backend — backend must be up first
+
+    networks:
+      - app_network
+
+
+# ─────────────────────────────────────────────────────────
+# Shared Docker network
+# All containers on this network can talk to each other by service name
+# postgres:5432, backend:5000 etc.
+# ─────────────────────────────────────────────────────────
+networks:
+  app_network:
+    driver: bridge
+
+
+# ─────────────────────────────────────────────────────────
+# Persistent volume for PostgreSQL data
+# ─────────────────────────────────────────────────────────
+volumes:
+  postgres_data:
+    driver: local
