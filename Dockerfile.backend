@@ -2,33 +2,40 @@
 # Backend Dockerfile
 # ============================================================
 
-FROM python:3.11-slim
+FROM python:3.11.9-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Install system deps
 RUN apt-get update && apt-get install -y \
-    gcc \
-    libpq-dev \
-    openssh-client \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+  gcc \
+  libpq-dev \
+  openssh-client \
+  curl \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy backend source
 COPY backend/ ./backend/
 COPY alembic/ ./alembic/
 COPY alembic.ini .
 
-# Ensure Python can resolve backend package
 ENV PYTHONPATH=/app
 
-# Copy environment file
-COPY .env .
+RUN useradd -m appuser && chown -R appuser:appuser /app
+USER appuser
 
 EXPOSE 5000
 
-# Run migrations then start Gunicorn using factory pattern
-CMD ["sh", "-c", "alembic upgrade head && gunicorn -k gthread -w 1 --threads 4 --bind 0.0.0.0:5000 --timeout 300 \"backend.app:create_app()\""]
+HEALTHCHECK --interval=30s --timeout=5s \
+  CMD curl -f http://localhost:5000/api/health || exit 1
+
+# At startup:
+#   1. Fetch PEM from AWS Secrets Manager using PEM_SECRET_NAME env var
+#   2. Write it to /app/ml-deploy-key.pem (used by Paramiko for SSH deployments)
+#   3. Run DB migrations
+#   4. Start Gunicorn
+CMD ["sh", "-c", "python -c \"\nimport boto3, os, stat\nclient = boto3.client('secretsmanager', region_name=os.getenv('AWS_REGION', 'ap-south-1'))\nsecret = client.get_secret_value(SecretId=os.getenv('PEM_SECRET_NAME'))\nwith open('/app/ml-deploy-key.pem', 'w') as f:\n    f.write(secret['SecretString'])\nos.chmod('/app/ml-deploy-key.pem', 0o600)\nprint('[OK] PEM key fetched from Secrets Manager')\n\" && alembic upgrade head && gunicorn -k gthread -w 1 --threads 8 --bind 0.0.0.0:5000 --timeout 300 'backend.app:create_app()'"]

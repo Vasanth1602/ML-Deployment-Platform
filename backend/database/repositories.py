@@ -123,6 +123,22 @@ class ApplicationRepository:
                 .order_by(Application.created_at.desc())
                 .all())
 
+    def get_apps_by_instance_db_id(self, instance_db_id: str) -> List[Application]:
+        """
+        Return all Application rows linked to a given ec2_instances.id
+        via the application_instances join table.
+        Used to cascade status changes when an EC2 instance is
+        stopped, started, or terminated.
+        """
+        from .models import ApplicationInstance
+        mappings = (self.db.query(ApplicationInstance)
+                    .filter_by(instance_id=instance_db_id)
+                    .all())
+        app_ids = [m.application_id for m in mappings]
+        if not app_ids:
+            return []
+        return self.db.query(Application).filter(Application.id.in_(app_ids)).all()
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # EC2InstanceRepository
@@ -171,6 +187,21 @@ class EC2InstanceRepository:
         self.db.add(mapping)
         self.db.flush()
         return mapping
+
+    def remove_application_link(self, instance_db_id: str):
+        """
+        Mark all application_instances rows for this instance as 'terminated'.
+        Called when an EC2 instance is terminated (on failure or cancellation)
+        so the join table stays consistent with the real AWS state.
+        """
+        self.db.query(ApplicationInstance).filter_by(
+            instance_id=instance_db_id
+        ).update({
+            'status': 'terminated',
+            'removed_at': datetime.utcnow(),
+        })
+        logger.debug('ApplicationInstance rows for instance %s marked terminated',
+                     instance_db_id)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

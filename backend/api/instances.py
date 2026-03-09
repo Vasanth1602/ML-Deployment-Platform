@@ -10,7 +10,7 @@ import logging
 
 from ..database.connection import db_session
 from ..database.models import EC2Instance, Deployment, Application
-from ..database.repositories import EC2InstanceRepository
+from ..database.repositories import EC2InstanceRepository, ApplicationRepository
 
 logger = logging.getLogger(__name__)
 instances_bp = Blueprint('instances', __name__)
@@ -82,7 +82,8 @@ def sync_instance_states():
     """Sync DB instance statuses with live AWS states."""
     try:
         db = db_session()
-        ec2_repo     = EC2InstanceRepository(db)
+        ec2_repo = EC2InstanceRepository(db)
+        app_repo = ApplicationRepository(db)
         db_instances = db.query(EC2Instance).all()
 
         if not db_instances:
@@ -111,6 +112,20 @@ def sync_instance_states():
                                  'old_status': old_status, 'new_status': new_status})
                 logger.info('sync: %s  %s → %s', inst.instance_id, old_status, new_status)
 
+                # ── Cascade to application_instances + applications ──────────────
+                if new_status == 'terminated':
+                    ec2_repo.remove_application_link(inst.id)
+                    for app in app_repo.get_apps_by_instance_db_id(inst.id):
+                        app_repo.update_status(app.id, 'terminated')
+                elif new_status == 'stopped':
+                    for app in app_repo.get_apps_by_instance_db_id(inst.id):
+                        app_repo.update_status(app.id, 'stopped')
+                elif new_status == 'running':
+                    for app in app_repo.get_apps_by_instance_db_id(inst.id):
+                        # Only flip back to active if app was previously stopped/running
+                        if app.status in ('stopped', 'running', 'active'):
+                            app_repo.update_status(app.id, 'active')
+
         db.commit()
         return jsonify({
             'success': True,
@@ -125,14 +140,18 @@ def sync_instance_states():
 
 @instances_bp.route('/api/instances/<instance_id>/stop', methods=['POST'])
 def stop_instance(instance_id):
-    """Stop an EC2 instance and update its DB status."""
+    """Stop an EC2 instance and cascade status to applications."""
     try:
         _get_orchestrator().aws_manager.stop_instance(instance_id)
         db       = db_session()
         ec2_repo = EC2InstanceRepository(db)
+        app_repo = ApplicationRepository(db)
         inst     = ec2_repo.get_by_aws_id(instance_id)
         if inst:
             ec2_repo.update_status(inst.id, 'stopped')
+            # Cascade: mark linked apps as stopped so Applications page reflects reality
+            for app in app_repo.get_apps_by_instance_db_id(inst.id):
+                app_repo.update_status(app.id, 'stopped')
             db.commit()
         return jsonify({'success': True, 'message': f'Instance {instance_id} stop initiated'})
     except Exception as e:
@@ -142,14 +161,19 @@ def stop_instance(instance_id):
 
 @instances_bp.route('/api/instances/<instance_id>/start', methods=['POST'])
 def start_instance(instance_id):
-    """Start a stopped EC2 instance and update its DB status."""
+    """Start a stopped EC2 instance and cascade status to applications."""
     try:
         _get_orchestrator().aws_manager.start_instance(instance_id)
         db       = db_session()
         ec2_repo = EC2InstanceRepository(db)
+        app_repo = ApplicationRepository(db)
         inst     = ec2_repo.get_by_aws_id(instance_id)
         if inst:
             ec2_repo.update_status(inst.id, 'running')
+            # Cascade: flip apps back to active when instance resumes
+            for app in app_repo.get_apps_by_instance_db_id(inst.id):
+                if app.status in ('stopped', 'running', 'active'):
+                    app_repo.update_status(app.id, 'active')
             db.commit()
         return jsonify({'success': True, 'message': f'Instance {instance_id} start initiated'})
     except Exception as e:
@@ -159,14 +183,20 @@ def start_instance(instance_id):
 
 @instances_bp.route('/api/instances/<instance_id>/terminate', methods=['POST'])
 def terminate_instance(instance_id):
-    """Terminate an EC2 instance and update its DB status."""
+    """Terminate an EC2 instance and cascade status to applications."""
     try:
         _get_orchestrator().aws_manager.terminate_instance(instance_id)
         db       = db_session()
         ec2_repo = EC2InstanceRepository(db)
+        app_repo = ApplicationRepository(db)
         inst     = ec2_repo.get_by_aws_id(instance_id)
         if inst:
             ec2_repo.update_status(inst.id, 'terminated')
+            # Cascade: mark application_instances row as terminated + removed_at
+            ec2_repo.remove_application_link(inst.id)
+            # Cascade: mark all linked applications as terminated
+            for app in app_repo.get_apps_by_instance_db_id(inst.id):
+                app_repo.update_status(app.id, 'terminated')
             db.commit()
         return jsonify({'success': True, 'message': f'Instance {instance_id} termination initiated'})
     except Exception as e:

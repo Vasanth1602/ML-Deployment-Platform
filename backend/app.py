@@ -9,6 +9,7 @@ from flask_socketio import SocketIO, emit
 import logging
 
 from .core.logging_config import configure_logging
+from .core.utils import load_pem_from_secrets_manager
 from .config import config
 from .database.connection import init_db, db_session, check_db_connection
 from .database.models import Tenant
@@ -33,6 +34,11 @@ def create_app() -> Flask:
         log_file=config.LOG_FILE,
         console_level=getattr(logging, config.LOG_LEVEL.upper(), logging.INFO)
     )
+
+    # ── PEM Key (SSH) ─────────────────────────────────────────────────────
+    # Fetch from AWS Secrets Manager at startup → /app/ml-deploy-key.pem
+    # Required for SSH-based deployments to EC2 instances.
+    load_pem_from_secrets_manager()
 
     # ── SocketIO ──────────────────────────────────────────────────────────
     socketio.init_app(
@@ -112,20 +118,32 @@ def create_app() -> Flask:
 
 
 def _ensure_default_tenant(logger):
-    """Create the default tenant row if it doesn't exist (single-tenant mode)."""
+    """
+    Upsert the default tenant row (single-tenant mode).
+    Uses get-or-create with a rollback-on-duplicate guard so it is safe
+    even when multiple workers start at the same moment.
+    """
     _db = db_session()
     try:
         existing = _db.query(Tenant).filter_by(slug='default').first()
-        if not existing:
-            tenant = Tenant(name='Default Workspace', slug='default')
-            _db.add(tenant)
-            _db.commit()
-            logger.info('[OK] Default tenant created (id=%s)', tenant.id[:8])
-        else:
+        if existing:
             logger.info('[OK] Default tenant found (id=%s)', existing.id[:8])
+            return
+
+        tenant = Tenant(name='Default Workspace', slug='default')
+        _db.add(tenant)
+        _db.commit()
+        logger.info('[OK] Default tenant created (id=%s)', tenant.id[:8])
+
     except Exception as e:
         _db.rollback()
-        logger.error('Failed to ensure default tenant: %s', e)
+        # Another worker beat us to it — that's fine, just log at INFO not ERROR
+        existing = _db.query(Tenant).filter_by(slug='default').first()
+        if existing:
+            logger.info('[OK] Default tenant already exists (id=%s) — race condition handled',
+                        existing.id[:8])
+        else:
+            logger.error('Failed to ensure default tenant: %s', e)
     finally:
         _db.close()
 

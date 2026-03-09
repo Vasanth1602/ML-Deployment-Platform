@@ -45,27 +45,86 @@ def deploy():
 
         logger.info('Received deployment request for: %s', github_url)
 
+        # Mutable holder so the background thread can write the deployment_id
+        # and we can return it to the frontend immediately in the response.
+        id_holder = {'deployment_id': None}
+
+        import threading
+        id_ready = threading.Event()
+
         def progress_callback(step, message, status, data):
             from .. import socketio
-            socketio.emit('deployment_progress', {
-                'step': step, 'message': message,
-                'status': status, 'data': data,
-            })
+            payload = {'step': step, 'message': message,
+                       'status': status, 'data': data}
+            # Include deployment_id once we have it so the frontend can
+            # correlate WebSocket events to the deployment that was just started.
+            if id_holder['deployment_id']:
+                payload['deployment_id'] = id_holder['deployment_id']
+            socketio.emit('deployment_progress', payload)
 
         def run_deployment():
             from .. import socketio
             result = _orchestrator.deploy(
-                github_url, instance_name, container_port, host_port, progress_callback
+                github_url, instance_name, container_port, host_port,
+                progress_callback,
+                on_id_assigned=lambda dep_id: (
+                    id_holder.update({'deployment_id': dep_id}),
+                    id_ready.set(),
+                )
             )
             socketio.emit('deployment_complete', result)
 
         t = Thread(target=run_deployment, daemon=True)
         t.start()
 
-        return jsonify({'success': True, 'message': 'Deployment started', 'github_url': github_url})
+        # Wait up to 5 s for the orchestrator to create the DB record and
+        # assign a short_id.  If it takes longer we still return success —
+        # the frontend will fall back to polling.
+        id_ready.wait(timeout=5)
+
+        return jsonify({
+            'success': True,
+            'message': 'Deployment started',
+            'github_url': github_url,
+            'deployment_id': id_holder['deployment_id'],   # may be None on timeout
+        })
 
     except Exception as e:
         logger.error('deploy error: %s', e)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@deployments_bp.route('/api/deployments/<deployment_id>/cancel', methods=['POST'])
+def cancel_deployment(deployment_id):
+    """
+    Cancel a running deployment.
+    Accepts either the full UUID or the 8-char short_id.
+    """
+    try:
+        db   = db_session()
+        repo = DeploymentRepository(db)
+
+        dep = repo.get_by_short_id(deployment_id)
+        if dep is None:
+            dep = repo.get_by_id(deployment_id)
+        if dep is None:
+            return jsonify({'success': False, 'error': 'Deployment not found'}), 404
+
+        if dep.status not in ('in_progress', 'pending'):
+            return jsonify({
+                'success': False,
+                'error': f'Deployment is already {dep.status} — cannot cancel',
+            }), 409
+
+        cancelled = _orchestrator.cancel(dep.short_id)
+        return jsonify({
+            'success': True,
+            'cancelled': cancelled,
+            'message': 'Cancel signal sent' if cancelled else 'Deployment not active in memory (may have just finished)',
+        })
+
+    except Exception as e:
+        logger.error('cancel_deployment error: %s', e)
         return jsonify({'success': False, 'error': str(e)}), 500
 
 

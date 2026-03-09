@@ -22,7 +22,7 @@ class SocketService {
         }
 
         this.socket = io(API_BASE_URL, {
-            transports: ['polling'],  // Use polling only - more reliable for long operations
+            transports: ['websocket', 'polling'],  // Use polling only - more reliable for long operations
             reconnection: true,
             reconnectionDelay: 1000,
             reconnectionAttempts: 10,
@@ -94,6 +94,24 @@ class SocketService {
     offDeploymentComplete(callback) {
         if (this.socket) {
             this.socket.off('deployment_complete', callback);
+        }
+    }
+
+    /**
+     * Subscribe to deployment_cancelled — emitted by the backend when the
+     * orchestrator's DeploymentCancelled exception handler finishes cleanup.
+     */
+    onDeploymentCancelled(callback) {
+        if (!this.socket) this.connect();
+        this.socket.on('deployment_cancelled', callback);
+    }
+
+    /**
+     * Unsubscribe from deployment_cancelled
+     */
+    offDeploymentCancelled(callback) {
+        if (this.socket) {
+            this.socket.off('deployment_cancelled', callback);
         }
     }
 

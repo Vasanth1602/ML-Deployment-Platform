@@ -19,14 +19,20 @@ export default function ProgressTracker({
     const getStepIcon = (step) => {
         if (step.status === 'success') {
             return <CheckCircle2 className="w-5 h-5 text-green-500" />;
-        } else if (step.status === 'error') {
+        } else if (step.status === 'error' || step.status === 'failed') {
+            // backend sends 'failed' for cancelled steps, 'error' for generic errors
             return <XCircle className="w-5 h-5 text-destructive" />;
         } else if (step.status === 'in_progress') {
             return <Loader2 className="w-5 h-5 text-primary animate-spin" />;
+        } else if (step.status === 'warning') {
+            return <XCircle className="w-5 h-5 text-yellow-500" />;
         } else {
             return <Circle className="w-5 h-5 text-muted-foreground" />;
         }
     };
+
+    const isCancelled = result && !result.success &&
+        (result.cancelled || result.error?.toLowerCase().includes('cancelled'));
 
     const getStatusBadge = () => {
         if (status === 'success') {
@@ -34,6 +40,13 @@ export default function ProgressTracker({
                 <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-green-500/10 text-green-500 text-sm font-medium">
                     <CheckCircle2 className="w-4 h-4" />
                     <span>Deployment Successful</span>
+                </div>
+            );
+        } else if (status === 'failed' && isCancelled) {
+            return (
+                <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-orange-500/10 text-orange-500 text-sm font-medium">
+                    <XCircle className="w-4 h-4" />
+                    <span>Deployment Cancelled</span>
                 </div>
             );
         } else if (status === 'failed') {
@@ -94,9 +107,10 @@ export default function ProgressTracker({
                             className={cn(
                                 "flex items-start gap-3 p-4 rounded-lg border transition-colors",
                                 step.status === 'success' ? 'bg-green-500/5 border-green-500/20' :
-                                    step.status === 'error' ? 'bg-destructive/5 border-destructive/20' :
+                                    step.status === 'error' || step.status === 'failed' ? 'bg-destructive/5 border-destructive/20' :
                                         step.status === 'in_progress' ? 'bg-primary/5 border-primary/20' :
-                                            'bg-secondary border-border'
+                                            step.status === 'warning' ? 'bg-yellow-500/5 border-yellow-500/20' :
+                                                'bg-secondary border-border'
                             )}
                         >
                             {/* Icon */}
@@ -180,7 +194,7 @@ export default function ProgressTracker({
                             <div className="flex items-center gap-3">
                                 <XCircle className="w-6 h-6 text-destructive" />
                                 <h3 className="text-lg font-semibold text-foreground">
-                                    Deployment Failed
+                                    {isCancelled ? 'Deployment Cancelled' : 'Deployment Failed'}
                                 </h3>
                             </div>
 
@@ -190,7 +204,9 @@ export default function ProgressTracker({
 
                             <div className="mt-4 p-3 bg-secondary rounded-lg">
                                 <p className="text-xs text-muted-foreground">
-                                    💡 <strong>Tip:</strong> Check the deployment logs for more details or try deploying again.
+                                    {isCancelled
+                                        ? '🛑 The deployment was cancelled. Any partially created AWS resources have been cleaned up.'
+                                        : '💡 <strong>Tip:</strong> Check the deployment logs for more details or try deploying again.'}
                                 </p>
                             </div>
                         </div>

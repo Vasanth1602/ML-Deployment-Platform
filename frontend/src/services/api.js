@@ -52,12 +52,19 @@ class ApiService {
         });
     }
 
-    async getDeployments() {
-        return this.request('/api/deployments');
+    async getDeployments(params = {}) {
+        const qs = new URLSearchParams(params).toString();
+        return this.request(`/api/deployments${qs ? '?' + qs : ''}`);
     }
 
     async getDeployment(deploymentId) {
         return this.request(`/api/deployments/${deploymentId}`);
+    }
+
+    async cancelDeployment(deploymentId) {
+        return this.request(`/api/deployments/${deploymentId}/cancel`, {
+            method: 'POST',
+        });
     }
 
     // Applications Endpoints

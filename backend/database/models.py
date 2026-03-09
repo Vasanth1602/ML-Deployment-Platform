@@ -210,9 +210,12 @@ class Application(Base):
             'repo_name': self.repo_name,
             'branch': self.branch,
             'container_port': self.container_port,
+            'container_name': self.container_name,
+            'image_name': self.image_name,
             'status': self.status,
             'nginx_enabled': self.nginx_enabled,
             'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'last_deployed_at': self.last_deployed_at.isoformat() if self.last_deployed_at else None,
         }
 

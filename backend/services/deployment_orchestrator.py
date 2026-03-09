@@ -24,6 +24,7 @@ from ..core.logging_config import set_deployment_context, clear_deployment_conte
 from ..core.input_validators import validate_github_url, validate_deployment_config
 from ..core.utils import sanitize_name, format_deployment_url, parse_github_url
 from ..config import config
+from ..database.models import Application
 
 # ── Database imports ──────────────────────────────────────────────────────────
 from ..database.connection import SessionLocal
@@ -37,15 +38,43 @@ from ..database.repositories import (
 logger = logging.getLogger(__name__)
 
 
+class DeploymentCancelled(Exception):
+    """Raised when a user cancels an in-progress deployment."""
+
+
 class DeploymentOrchestrator:
     """Orchestrates the complete deployment workflow."""
+
+    # Maps short_id → threading.Event — set() to cancel that deployment
+    _cancel_flags: dict = {}
 
     def __init__(self):
         """Initialize Deployment Orchestrator."""
         self.aws_manager = AWSManager()
-        # ── NOTE: self.deployments dict is GONE ──────────────────────────────
-        # All state now lives in the database. Use list_deployments() and
-        # get_deployment_status() which query the DB.
+
+    # ── Cancellation helpers ──────────────────────────────────────────────────
+    def cancel(self, short_id: str) -> bool:
+        """Signal a running deployment to stop. Returns True if flag was found."""
+        event = self._cancel_flags.get(short_id)
+        if event:
+            event.set()
+            logger.info('Cancel requested for deployment %s', short_id)
+            return True
+        logger.warning('No active deployment found with short_id=%s', short_id)
+        return False
+
+    def _register_cancel(self, short_id: str):
+        import threading
+        self._cancel_flags[short_id] = threading.Event()
+
+    def _unregister_cancel(self, short_id: str):
+        self._cancel_flags.pop(short_id, None)
+
+    def _check_cancel(self, short_id: str):
+        """Raise DeploymentCancelled if the cancel flag is set."""
+        event = self._cancel_flags.get(short_id)
+        if event and event.is_set():
+            raise DeploymentCancelled('Cancelled by user')
 
     # ─────────────────────────────────────────────────────────────────────────
     # Main deploy() method
@@ -55,7 +84,8 @@ class DeploymentOrchestrator:
                instance_name: Optional[str] = None,
                container_port: int = None,
                host_port: int = None,
-               progress_callback: Optional[Callable] = None) -> Dict:
+               progress_callback: Optional[Callable] = None,
+               on_id_assigned: Optional[Callable] = None) -> Dict:
         """
         Execute complete deployment workflow.
 
@@ -65,6 +95,10 @@ class DeploymentOrchestrator:
             container_port:    Container port (uses config default if None)
             host_port:         Host port (uses config default if None)
             progress_callback: Function called for real-time WebSocket updates
+            on_id_assigned:    Optional callback(deployment_short_id) fired as
+                               soon as the DB record is created, so the HTTP
+                               response can include the id without waiting for
+                               the full deployment to complete.
 
         Returns:
             Dictionary with deployment results (always returned, even on failure)
@@ -165,6 +199,16 @@ class DeploymentOrchestrator:
             logger.info('Deployment record created: short_id=%s (db_id=%s...)',
                         dep.short_id, dep.id[:8])
 
+            # Notify the HTTP route so it can include the id in its response
+            if on_id_assigned:
+                try:
+                    on_id_assigned(dep.short_id)
+                except Exception:
+                    pass  # never let the notify crash the deployment
+
+            # Register cancel flag so the HTTP cancel endpoint can signal us
+            self._register_cancel(dep.short_id)
+
             # ── Step 3: Create EC2 instance ───────────────────────────────────
             update_progress('EC2 Creation', 'Creating EC2 instance', 'in_progress')
 
@@ -197,12 +241,13 @@ class DeploymentOrchestrator:
                            'success', {'public_ip': instance_info['public_ip']})
 
             # ── Step 4: SSH + Docker ──────────────────────────────────────────
+            self._check_cancel(dep.short_id)
             update_progress('Docker Installation',
                            'Waiting for SSH and installing Docker', 'in_progress')
 
             docker_manager = DockerManager(
                 instance_info['public_ip'],
-                key_file=f"{config.AWS_KEY_PAIR_NAME}.pem"
+                key_file='/app/ml-deploy-key.pem'  # fetched from Secrets Manager at startup
             )
             try:
                 docker_manager.connect(max_wait=180, retry_interval=5,
@@ -227,7 +272,7 @@ class DeploymentOrchestrator:
                                'Installing NGINX reverse proxy', 'in_progress')
                 nginx_manager = NginxManager(
                     instance_info['public_ip'],
-                    key_file=f"{config.AWS_KEY_PAIR_NAME}.pem"
+                    key_file='/app/ml-deploy-key.pem'  # fetched from Secrets Manager at startup
                 )
                 try:
                     nginx_manager.connect(max_wait=180, retry_interval=5,
@@ -244,11 +289,12 @@ class DeploymentOrchestrator:
                 update_progress('NGINX Installation', 'NGINX installed', 'success')
 
             # ── Step 5: Clone repository ──────────────────────────────────────
+            self._check_cancel(dep.short_id)
             update_progress('Repository Clone', 'Cloning GitHub repository', 'in_progress')
 
             github_manager = GitHubManager(
                 instance_info['public_ip'],
-                key_file=f"{config.AWS_KEY_PAIR_NAME}.pem"
+                key_file='/app/ml-deploy-key.pem'  # fetched from Secrets Manager at startup
             )
             try:
                 github_manager.connect(max_wait=180, retry_interval=5,
@@ -281,6 +327,7 @@ class DeploymentOrchestrator:
             update_progress('Project Validation', 'Project structure validated', 'success')
 
             # ── Step 7: Build Docker image ────────────────────────────────────
+            self._check_cancel(dep.short_id)
             update_progress('Docker Build', 'Building Docker image', 'in_progress')
 
             image_name = sanitize_name(instance_name)
@@ -317,7 +364,7 @@ class DeploymentOrchestrator:
             result['port'] = host_port
 
             # Update Application record with container details
-            db.query(application.__class__).filter_by(id=application.id).update({
+            db.query(Application).filter_by(id=application.id).update({
                 'container_name': container_name,
                 'image_name': image_name,
                 'status': 'active',
@@ -404,7 +451,61 @@ class DeploymentOrchestrator:
                            {'url': deployment_url})
 
             logger.info('[OK] Deployment %s completed: %s', dep.short_id, deployment_url)
+            self._unregister_cancel(dep.short_id)
             return result
+
+        # ─────────────────────────────────────────────────────────────────────
+        # Cancellation path (must come BEFORE generic Exception)
+        # ─────────────────────────────────────────────────────────────────────
+        except DeploymentCancelled:
+            error_msg = 'Cancelled by user'
+            logger.info('Deployment %s was cancelled', dep.short_id if dep else '?')
+
+            result['success']   = False
+            result['cancelled'] = True
+            result['error']     = error_msg
+            result['end_time']  = datetime.now().isoformat()
+
+            try:
+                db.rollback()
+                if dep:
+                    dep_repo.mark_failed(dep.id, error_msg)
+                    dep_repo.add_step(dep.id, 99, 'Cancelled', 'failed',
+                                      message='Deployment cancelled by user')
+                    # ── Sync applications.status so UI is consistent ──────────
+                    if application:
+                        app_repo.update_status(application.id, 'failed')
+                    db.commit()
+                    self._unregister_cancel(dep.short_id)
+            except Exception as db_err:
+                logger.error('DB error recording cancellation: %s', db_err)
+
+            # Terminate the EC2 instance created for this deployment
+            if 'instance_id' in result:
+                try:
+                    update_progress('Cleanup', 'Terminating EC2 instance...', 'in_progress')
+                    self.aws_manager.terminate_instance(result['instance_id'])
+                    # Mark instance + application_instances join row as terminated in DB
+                    ec2_rec = ec2_repo.get_by_aws_id(result['instance_id'])
+                    if ec2_rec:
+                        ec2_repo.update_status(ec2_rec.id, 'terminated')
+                        ec2_repo.remove_application_link(ec2_rec.id)   # fix join table
+                        db.commit()
+                    update_progress('Cleanup', f"Instance {result['instance_id']} terminated", 'success')
+                    logger.info('Cancelled deployment: terminated EC2 %s', result['instance_id'])
+                except Exception as cleanup_err:
+                    logger.error('EC2 cleanup after cancel failed: %s', cleanup_err)
+                    update_progress('Cleanup', f'Cleanup warning: {cleanup_err}', 'warning')
+
+            update_progress('Cancelled', 'Deployment cancelled by user', 'failed')
+
+            # Emit a distinct WebSocket event so the frontend can show
+            # 'Deployment Cancelled' rather than the generic 'Deployment Failed' UI
+            try:
+                from .. import socketio
+                socketio.emit('deployment_cancelled', result)
+            except Exception:
+                pass  # non-fatal — frontend will catch from deployment_complete too
 
         # ─────────────────────────────────────────────────────────────────────
         # Failure path
@@ -421,19 +522,29 @@ class DeploymentOrchestrator:
                 db.rollback()   # discard any uncommitted buffered writes
                 if dep:
                     dep_repo.mark_failed(dep.id, error_msg)
+                    # ── Sync applications.status so UI is consistent ──────────
+                    if application:
+                        app_repo.update_status(application.id, 'failed')
                     db.commit()
             except Exception as db_err:
                 logger.error('DB error while recording failure: %s', db_err)
 
-            # Attempt EC2 cleanup
+            # Terminate EC2 instance on failure
             if 'instance_id' in result:
                 try:
-                    update_progress('Cleanup', 'Cleaning up failed deployment', 'in_progress')
-                    # Uncomment below to auto-terminate on failure:
-                    # self.aws_manager.terminate_instance(result['instance_id'])
-                    update_progress('Cleanup', 'Cleanup noted (instance kept for debugging)', 'success')
+                    update_progress('Cleanup', 'Terminating EC2 instance...', 'in_progress')
+                    self.aws_manager.terminate_instance(result['instance_id'])
+                    # Mark instance + application_instances join row as terminated in DB
+                    ec2_rec = ec2_repo.get_by_aws_id(result['instance_id'])
+                    if ec2_rec:
+                        ec2_repo.update_status(ec2_rec.id, 'terminated')
+                        ec2_repo.remove_application_link(ec2_rec.id)   # fix join table
+                        db.commit()
+                    update_progress('Cleanup', f"Instance {result['instance_id']} terminated", 'success')
+                    logger.info('Failed deployment: terminated EC2 %s', result['instance_id'])
                 except Exception as cleanup_err:
-                    logger.error('Cleanup failed: %s', cleanup_err)
+                    logger.error('EC2 cleanup after failure: %s', cleanup_err)
+                    update_progress('Cleanup', f'Cleanup warning: {cleanup_err}', 'warning')
 
             return result
 

@@ -49,6 +49,7 @@ def list_applications():
                 'deployment_status': latest_deployment.status if latest_deployment else None,
                 'deployment_url':    latest_deployment.deployment_url if latest_deployment else None,
                 'instance_id':       latest_instance.instance_id if latest_instance else None,
+                'public_ip':         latest_instance.public_ip if latest_instance else None,
             })
             enriched.append(app_data)
 
