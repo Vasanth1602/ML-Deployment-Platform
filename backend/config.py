@@ -12,10 +12,12 @@ load_dotenv()
 
 class Config:
     """Application configuration class."""
-    
-    # AWS Configuration
-    AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
-    AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
+
+    # ── AWS Configuration ─────────────────────────────────────────────────────
+    # NOTE: AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY are intentionally absent.
+    # Credentials are resolved automatically by boto3 via the IAM Task Role
+    # (ECS container metadata endpoint) in production, or via `aws configure`
+    # / AWS_PROFILE for local development. Never put long-lived keys here.
     AWS_REGION = os.getenv('AWS_REGION', 'us-east-1')
     AWS_DEFAULT_INSTANCE_TYPE = os.getenv('AWS_DEFAULT_INSTANCE_TYPE', 't2.micro')
     AWS_KEY_PAIR_NAME = os.getenv('AWS_KEY_PAIR_NAME')
@@ -97,14 +99,12 @@ class Config:
     def validate(cls):
         """Validate required configuration values."""
         errors = []
-        
-        if not cls.AWS_ACCESS_KEY_ID:
-            errors.append("AWS_ACCESS_KEY_ID is required")
-        if not cls.AWS_SECRET_ACCESS_KEY:
-            errors.append("AWS_SECRET_ACCESS_KEY is required")
+
+        # AWS credentials are NOT validated here — they come from the IAM Task
+        # Role at runtime (no static keys anywhere in this codebase).
         if not cls.AWS_KEY_PAIR_NAME:
             errors.append("AWS_KEY_PAIR_NAME is required")
-            
+
         return errors
     
     @classmethod
