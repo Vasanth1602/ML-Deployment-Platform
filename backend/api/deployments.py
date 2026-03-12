@@ -3,7 +3,7 @@ Deployments API Blueprint
 Routes: /api/deploy, /api/deployments, /api/deployments/<id>, /api/deployments/<id>/logs
 """
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, g
 from threading import Thread
 from datetime import datetime
 import logging
@@ -12,6 +12,7 @@ from ..database.connection import db_session
 from ..database.models import Deployment, DeploymentStep, DeploymentLog
 from ..database.repositories import DeploymentRepository
 from ..services.deployment_orchestrator import DeploymentOrchestrator
+from ..core.auth_middleware import require_auth
 
 logger = logging.getLogger(__name__)
 deployments_bp = Blueprint('deployments', __name__)
@@ -21,6 +22,7 @@ _orchestrator = DeploymentOrchestrator()
 
 
 @deployments_bp.route('/api/deploy', methods=['POST'])
+@require_auth
 def deploy():
     """
     Deploy application from GitHub repository.
@@ -42,8 +44,9 @@ def deploy():
         instance_name  = data.get('instance_name')
         container_port = data.get('container_port')
         host_port      = data.get('host_port')
+        user_id        = g.current_user.id   # captured before background thread
 
-        logger.info('Received deployment request for: %s', github_url)
+        logger.info('Received deployment request for: %s (user=%s)', github_url, user_id[:8])
 
         # Mutable holder so the background thread can write the deployment_id
         # and we can return it to the frontend immediately in the response.
@@ -53,40 +56,37 @@ def deploy():
         id_ready = threading.Event()
 
         def progress_callback(step, message, status, data):
-            from .. import socketio
+            from ..app import socketio
             payload = {'step': step, 'message': message,
                        'status': status, 'data': data}
-            # Include deployment_id once we have it so the frontend can
-            # correlate WebSocket events to the deployment that was just started.
             if id_holder['deployment_id']:
                 payload['deployment_id'] = id_holder['deployment_id']
             socketio.emit('deployment_progress', payload)
 
         def run_deployment():
-            from .. import socketio
+            from ..app import socketio
             result = _orchestrator.deploy(
                 github_url, instance_name, container_port, host_port,
                 progress_callback,
                 on_id_assigned=lambda dep_id: (
                     id_holder.update({'deployment_id': dep_id}),
                     id_ready.set(),
-                )
+                ),
+                user_id=user_id,   # store triggered_by_user_id
             )
             socketio.emit('deployment_complete', result)
 
         t = Thread(target=run_deployment, daemon=True)
         t.start()
 
-        # Wait up to 5 s for the orchestrator to create the DB record and
-        # assign a short_id.  If it takes longer we still return success —
-        # the frontend will fall back to polling.
+        # Wait up to 5 s for the orchestrator to create the DB record and assign short_id.
         id_ready.wait(timeout=5)
 
         return jsonify({
             'success': True,
             'message': 'Deployment started',
             'github_url': github_url,
-            'deployment_id': id_holder['deployment_id'],   # may be None on timeout
+            'deployment_id': id_holder['deployment_id'],
         })
 
     except Exception as e:
@@ -95,6 +95,7 @@ def deploy():
 
 
 @deployments_bp.route('/api/deployments/<deployment_id>/cancel', methods=['POST'])
+@require_auth
 def cancel_deployment(deployment_id):
     """
     Cancel a running deployment.
@@ -109,6 +110,11 @@ def cancel_deployment(deployment_id):
             dep = repo.get_by_id(deployment_id)
         if dep is None:
             return jsonify({'success': False, 'error': 'Deployment not found'}), 404
+
+        # Ownership check: only the owner or an admin can cancel
+        user = g.current_user
+        if user.role != 'admin' and dep.triggered_by_user_id != user.id:
+            return jsonify({'success': False, 'error': 'Access denied'}), 403
 
         if dep.status not in ('in_progress', 'pending'):
             return jsonify({
@@ -129,26 +135,35 @@ def cancel_deployment(deployment_id):
 
 
 @deployments_bp.route('/api/deployments', methods=['GET'])
+@require_auth
 def list_deployments():
     """
-    List all deployments, newest first.
+    List deployments — filtered by ownership unless user is admin.
     Query params:
-        limit  (int, default 50)    — max rows to return
-        status (str, optional)      — filter by status (success/failed/in_progress)
-        app_id (str, optional)      — filter by application ID
+        limit  (int, default 50)
+        status (str, optional)
+        app_id (str, optional)
     """
     try:
         limit  = min(int(request.args.get('limit', 50)), 200)
         status = request.args.get('status')
         app_id = request.args.get('app_id')
+        user   = g.current_user
 
-        db = db_session()
-        q = db.query(Deployment).order_by(Deployment.started_at.desc())
+        db   = db_session()
+        repo = DeploymentRepository(db)
+
+        # Service-layer role dispatch: admin sees all, user sees own
+        if user.role == 'admin':
+            deployments = repo.list_all_admin(limit=limit)
+        else:
+            deployments = repo.list_by_user(user.id, limit=limit)
+
+        # Optional in-memory filters after ownership-aware query
         if status:
-            q = q.filter(Deployment.status == status)
+            deployments = [d for d in deployments if d.status == status]
         if app_id:
-            q = q.filter(Deployment.application_id == app_id)
-        deployments = q.limit(limit).all()
+            deployments = [d for d in deployments if d.application_id == app_id]
 
         return jsonify({
             'success': True,
@@ -161,6 +176,7 @@ def list_deployments():
 
 
 @deployments_bp.route('/api/deployments/<deployment_id>', methods=['GET'])
+@require_auth
 def get_deployment(deployment_id):
     """
     Get one deployment's detail — includes steps and the last 200 log lines.
@@ -169,12 +185,17 @@ def get_deployment(deployment_id):
     try:
         db   = db_session()
         repo = DeploymentRepository(db)
+        user = g.current_user
 
         dep = repo.get_by_short_id(deployment_id)
         if dep is None:
             dep = repo.get_by_id(deployment_id)
         if dep is None:
             return jsonify({'success': False, 'error': 'Deployment not found'}), 404
+
+        # Ownership check: only owner or admin can view
+        if user.role != 'admin' and dep.triggered_by_user_id != user.id:
+            return jsonify({'success': False, 'error': 'Access denied'}), 403
 
         steps = (db.query(DeploymentStep)
                  .filter_by(deployment_id=dep.id)
@@ -215,18 +236,20 @@ def get_deployment(deployment_id):
 
 
 @deployments_bp.route('/api/deployments/<deployment_id>/logs', methods=['GET'])
+@require_auth
 def get_deployment_logs(deployment_id):
     """
     Get log lines for a deployment (paginated).
     Query params:
-        limit  (int, default 500) — lines per page
-        after  (str, optional)    — ISO timestamp; return only lines after this time
-        level  (str, optional)    — filter by log level (INFO/WARNING/ERROR)
+        limit  (int, default 500)
+        after  (str, optional) — ISO timestamp
+        level  (str, optional) — INFO/WARNING/ERROR
     """
     try:
         limit = min(int(request.args.get('limit', 500)), 2000)
         after = request.args.get('after')
         level = request.args.get('level')
+        user  = g.current_user
 
         db   = db_session()
         repo = DeploymentRepository(db)
@@ -234,6 +257,10 @@ def get_deployment_logs(deployment_id):
         dep = repo.get_by_short_id(deployment_id) or repo.get_by_id(deployment_id)
         if dep is None:
             return jsonify({'success': False, 'error': 'Deployment not found'}), 404
+
+        # Ownership check
+        if user.role != 'admin' and dep.triggered_by_user_id != user.id:
+            return jsonify({'success': False, 'error': 'Access denied'}), 403
 
         q = (db.query(DeploymentLog)
              .filter_by(deployment_id=dep.id)

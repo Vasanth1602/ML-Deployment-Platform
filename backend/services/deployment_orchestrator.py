@@ -85,7 +85,8 @@ class DeploymentOrchestrator:
                container_port: int = None,
                host_port: int = None,
                progress_callback: Optional[Callable] = None,
-               on_id_assigned: Optional[Callable] = None) -> Dict:
+               on_id_assigned: Optional[Callable] = None,
+               user_id: Optional[str] = None) -> Dict:
         """
         Execute complete deployment workflow.
 
@@ -183,6 +184,7 @@ class DeploymentOrchestrator:
                 repo_name=repo_name,
                 branch='main',
                 status='pending',
+                created_by_user_id=user_id,   # set on first create; ignored if app already exists
             )
             db.commit()
 
@@ -190,6 +192,7 @@ class DeploymentOrchestrator:
             dep = dep_repo.create(
                 tenant_id=tenant.id,
                 application_id=application.id,
+                triggered_by_user_id=user_id,   # records which user started this deployment
             )
             db.commit()
 
@@ -247,7 +250,7 @@ class DeploymentOrchestrator:
 
             docker_manager = DockerManager(
                 instance_info['public_ip'],
-                key_file='/app/ml-deploy-key.pem'  # fetched from Secrets Manager at startup
+                key_file=config.PEM_KEY_PATH
             )
             try:
                 docker_manager.connect(max_wait=180, retry_interval=5,
@@ -272,7 +275,7 @@ class DeploymentOrchestrator:
                                'Installing NGINX reverse proxy', 'in_progress')
                 nginx_manager = NginxManager(
                     instance_info['public_ip'],
-                    key_file='/app/ml-deploy-key.pem'  # fetched from Secrets Manager at startup
+                    key_file=config.PEM_KEY_PATH
                 )
                 try:
                     nginx_manager.connect(max_wait=180, retry_interval=5,
@@ -294,7 +297,7 @@ class DeploymentOrchestrator:
 
             github_manager = GitHubManager(
                 instance_info['public_ip'],
-                key_file='/app/ml-deploy-key.pem'  # fetched from Secrets Manager at startup
+                key_file=config.PEM_KEY_PATH
             )
             try:
                 github_manager.connect(max_wait=180, retry_interval=5,
@@ -502,7 +505,7 @@ class DeploymentOrchestrator:
             # Emit a distinct WebSocket event so the frontend can show
             # 'Deployment Cancelled' rather than the generic 'Deployment Failed' UI
             try:
-                from .. import socketio
+                from ..app import socketio
                 socketio.emit('deployment_cancelled', result)
             except Exception:
                 pass  # non-fatal — frontend will catch from deployment_complete too

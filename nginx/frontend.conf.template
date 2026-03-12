@@ -12,7 +12,7 @@ server {
     # API proxy
     # =========================
     location /api/ {
-        proxy_pass http://ml-backend:5000;
+        proxy_pass http://${BACKEND_HOST}:${BACKEND_PORT};
         proxy_http_version 1.1;
 
         proxy_set_header Host $host;
@@ -24,7 +24,7 @@ server {
     # Socket.IO proxy
     # =========================
     location /socket.io/ {
-        proxy_pass http://ml-backend:5000/socket.io/;
+        proxy_pass http://${BACKEND_HOST}:${BACKEND_PORT}/socket.io/;
 
         proxy_http_version 1.1;
 

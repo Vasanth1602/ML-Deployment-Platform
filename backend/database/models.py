@@ -5,16 +5,17 @@ Each class = one database table.
 Each attribute = one column.
 
 Table list:
-  1.  Tenant             — multi-tenant org management
-  2.  EC2Instance        — platform-owned AWS instances (no tenant_id)
-  3.  Application        — deployed GitHub repos
-  4.  ApplicationInstance— mapping: which app runs on which instance + port
-  5.  Deployment         — every deploy attempt (history)
-  6.  DeploymentStep     — granular steps (EC2, Docker, NGINX …)
-  7.  DeploymentLog      — real-time log lines (BIGSERIAL PK)
-  8.  Secret             — AWS Secrets Manager ARN references only
-  9.  EnvironmentVariable— app config: plaintext OR secret reference
-  10. InstanceMetric     — CPU / memory / disk metrics (BIGSERIAL PK)
+  1.  User              — platform users with JWT auth
+  2.  Tenant             — multi-tenant org management
+  3.  EC2Instance        — platform-owned AWS instances (no tenant_id)
+  4.  Application        — deployed GitHub repos
+  5.  ApplicationInstance— mapping: which app runs on which instance + port
+  6.  Deployment         — every deploy attempt (history)
+  7.  DeploymentStep     — granular steps (EC2, Docker, NGINX …)
+  8.  DeploymentLog      — real-time log lines (BIGSERIAL PK)
+  9.  Secret             — AWS Secrets Manager ARN references only
+  10. EnvironmentVariable— app config: plaintext OR secret reference
+  11. InstanceMetric     — CPU / memory / disk metrics (BIGSERIAL PK)
 """
 
 import uuid
@@ -70,7 +71,44 @@ def _short_id() -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 1. Tenant
+# 1. User
+# ─────────────────────────────────────────────────────────────────────────────
+class User(Base):
+    """
+    Platform user — authenticated via JWT.
+    Owns applications and deployments via created_by_user_id / triggered_by_user_id.
+
+    NOTE: email_verified is intentionally excluded for the current version.
+          Add email_verified (Boolean), verification_token (String) columns
+          and a /api/auth/verify-email endpoint when moving to production
+          with a mail provider (SendGrid / AWS SES).
+    """
+    __tablename__ = 'users'
+
+    id            = Column(GUID, primary_key=True, default=_uuid)
+    email         = Column(String(255), unique=True, nullable=False)
+    password_hash = Column(String(255), nullable=False)
+    role          = Column(String(20), nullable=False, default='user')  # 'user' | 'admin'
+    is_active     = Column(Boolean, default=True)
+    created_at    = Column(DateTime, default=datetime.utcnow)
+    last_login    = Column(DateTime, nullable=True)
+
+    def __repr__(self):
+        return f'<User email={self.email!r} role={self.role!r}>'
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'email': self.email,
+            'role': self.role,
+            'is_active': self.is_active,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'last_login': self.last_login.isoformat() if self.last_login else None,
+        }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2. Tenant
 # ─────────────────────────────────────────────────────────────────────────────
 class Tenant(Base):
     """

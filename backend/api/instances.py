@@ -5,12 +5,13 @@ Routes: /api/instances, /api/instances/sync,
         /api/instances/<id>/terminate, /api/stats
 """
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, g
 import logging
 
 from ..database.connection import db_session
-from ..database.models import EC2Instance, Deployment, Application
+from ..database.models import EC2Instance, Deployment, Application, ApplicationInstance
 from ..database.repositories import EC2InstanceRepository, ApplicationRepository
+from ..core.auth_middleware import require_auth, require_admin
 
 logger = logging.getLogger(__name__)
 instances_bp = Blueprint('instances', __name__)
@@ -23,6 +24,7 @@ def _get_orchestrator():
 
 
 @instances_bp.route('/api/instances', methods=['GET'])
+@require_auth
 def list_instances():
     """
     List EC2 instances — merges DB records with live AWS state.
@@ -31,8 +33,27 @@ def list_instances():
     """
     source = request.args.get('source', 'merged')
     try:
-        db = db_session()
-        db_instances = db.query(EC2Instance).order_by(EC2Instance.created_at.desc()).all()
+        user = g.current_user
+        db   = db_session()
+
+        # Role dispatch: admin sees all instances, user sees only their own
+        if user.role == 'admin':
+            db_instances = db.query(EC2Instance).order_by(EC2Instance.created_at.desc()).all()
+        else:
+            # Instances linked to applications that belong to this user
+            user_inst_ids = (
+                db.query(ApplicationInstance.instance_id)
+                .join(Application, ApplicationInstance.application_id == Application.id)
+                .filter(Application.created_by_user_id == user.id)
+                .subquery()
+            )
+            db_instances = (
+                db.query(EC2Instance)
+                .filter(EC2Instance.id.in_(user_inst_ids))
+                .order_by(EC2Instance.created_at.desc())
+                .all()
+            )
+
         db_map = {inst.instance_id: inst for inst in db_instances}
 
         if source == 'db':
@@ -66,9 +87,13 @@ def list_instances():
 
         for aws_id, live in aws_map.items():
             if aws_id not in db_map:
-                live['source']      = 'aws_only'
-                live['state_match'] = None
-                merged.append(live)
+                # Only surface aws_only instances to admins —
+                # regular users must not see instances from other users
+                # that happen to exist in AWS but aren't in their DB records.
+                if user.role == 'admin':
+                    live['source']      = 'aws_only'
+                    live['state_match'] = None
+                    merged.append(live)
 
         return jsonify({'success': True, 'source': 'merged',
                         'count': len(merged), 'instances': merged})
@@ -78,6 +103,7 @@ def list_instances():
 
 
 @instances_bp.route('/api/instances/sync', methods=['POST'])
+@require_auth
 def sync_instance_states():
     """Sync DB instance statuses with live AWS states."""
     try:
@@ -139,6 +165,7 @@ def sync_instance_states():
 
 
 @instances_bp.route('/api/instances/<instance_id>/stop', methods=['POST'])
+@require_auth
 def stop_instance(instance_id):
     """Stop an EC2 instance and cascade status to applications."""
     try:
@@ -160,6 +187,7 @@ def stop_instance(instance_id):
 
 
 @instances_bp.route('/api/instances/<instance_id>/start', methods=['POST'])
+@require_auth
 def start_instance(instance_id):
     """Start a stopped EC2 instance and cascade status to applications."""
     try:
@@ -182,6 +210,8 @@ def start_instance(instance_id):
 
 
 @instances_bp.route('/api/instances/<instance_id>/terminate', methods=['POST'])
+@require_auth
+@require_admin
 def terminate_instance(instance_id):
     """Terminate an EC2 instance and cascade status to applications."""
     try:
@@ -207,37 +237,60 @@ def terminate_instance(instance_id):
 # ── Dashboard Stats ───────────────────────────────────────────────────────────
 
 @instances_bp.route('/api/stats', methods=['GET'])
+@require_auth
 def get_stats():
-    """Dashboard summary counts — used by the frontend status bar."""
+    """Dashboard summary counts — scoped to the current user (admin sees all)."""
     try:
-        db = db_session()
+        user = g.current_user
+        db   = db_session()
 
-        total_deps   = db.query(Deployment).count()
-        success_deps = db.query(Deployment).filter_by(status='success').count()
-        failed_deps  = db.query(Deployment).filter_by(status='failed').count()
-        running_deps = db.query(Deployment).filter_by(status='in_progress').count()
-
-        total_instances   = db.query(EC2Instance).count()
-        running_instances = db.query(EC2Instance).filter_by(status='running').count()
-
-        total_apps  = db.query(Application).count()
-        active_apps = db.query(Application).filter_by(status='active').count()
+        if user.role == 'admin':
+            # Admin: platform-wide totals
+            total_deps    = db.query(Deployment).count()
+            success_deps  = db.query(Deployment).filter_by(status='success').count()
+            failed_deps   = db.query(Deployment).filter_by(status='failed').count()
+            running_deps  = db.query(Deployment).filter_by(status='in_progress').count()
+            total_apps    = db.query(Application).count()
+            active_apps   = db.query(Application).filter_by(status='active').count()
+            total_inst    = db.query(EC2Instance).count()
+            running_inst  = db.query(EC2Instance).filter_by(status='running').count()
+        else:
+            # Regular user: only their own data
+            uid = user.id
+            total_deps    = db.query(Deployment).filter_by(triggered_by_user_id=uid).count()
+            success_deps  = db.query(Deployment).filter_by(triggered_by_user_id=uid, status='success').count()
+            failed_deps   = db.query(Deployment).filter_by(triggered_by_user_id=uid, status='failed').count()
+            running_deps  = db.query(Deployment).filter_by(triggered_by_user_id=uid, status='in_progress').count()
+            total_apps    = db.query(Application).filter_by(created_by_user_id=uid).count()
+            active_apps   = db.query(Application).filter_by(created_by_user_id=uid, status='active').count()
+            # Instances scoped to this user's applications
+            user_inst_ids = (
+                db.query(ApplicationInstance.instance_id)
+                .join(Application, ApplicationInstance.application_id == Application.id)
+                .filter(Application.created_by_user_id == uid)
+                .subquery()
+            )
+            total_inst   = db.query(EC2Instance).filter(EC2Instance.id.in_(user_inst_ids)).count()
+            running_inst = db.query(EC2Instance).filter(
+                EC2Instance.id.in_(user_inst_ids),
+                EC2Instance.status == 'running',
+            ).count()
 
         return jsonify({
             'success': True,
             # Flat stats — consumed directly by Dashboard.jsx
             'stats': {
-                'total_applications':  total_apps,
-                'active_deployments':  running_deps,
-                'failed_deployments':  failed_deps,
-                'running_instances':   running_instances,
+                'total_applications': total_apps,
+                'active_deployments': running_deps,
+                'failed_deployments': failed_deps,
+                'running_instances':  running_inst,
             },
             # Detailed breakdown — available for future use
             'deployments': {
                 'total': total_deps, 'success': success_deps,
                 'failed': failed_deps, 'in_progress': running_deps,
             },
-            'instances':    {'total': total_instances, 'running': running_instances},
+            'instances':    {'total': total_inst, 'running': running_inst},
             'applications': {'total': total_apps, 'active': active_apps},
         })
     except Exception as e:

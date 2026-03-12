@@ -21,9 +21,9 @@ services:
     restart: unless-stopped
 
     environment:
-      POSTGRES_USER: dbadmin
-      POSTGRES_PASSWORD: AutoDeploy123
-      POSTGRES_DB: autodeploy
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
 
     ports:
       - "5432:5432"     # exposed so you can still connect from host (psql CLI, pgAdmin)
@@ -32,7 +32,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
 
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U dbadmin -d autodeploy"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -55,11 +55,18 @@ services:
       # ⚠️ CRITICAL: use service name "postgres" NOT "localhost"
       # Inside Docker, localhost = the backend container itself
       # "postgres" = the postgres service on the shared Docker network
-      DATABASE_URL: postgresql://dbadmin:AutoDeploy123@postgres:5432/autodeploy
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
+
+      # PEM key path (override in ECS via Secrets Manager mount)
+      PEM_KEY_PATH: ${PEM_KEY_PATH:-/app/ml-deploy-key.pem}
 
       # Flask settings
-      FLASK_ENV: development
-      APP_PORT: "5000"
+      FLASK_ENV: ${FLASK_ENV:-production}
+      APP_PORT: ${APP_PORT:-5000}
+
+      # CORS / Frontend origin
+      FRONTEND_URL: ${FRONTEND_URL}
+      CORS_ORIGINS: ${CORS_ORIGINS}
 
       # AWS — NO access keys here.
       # On ECS Fargate: boto3 auto-fetches short-lived credentials from the
@@ -72,16 +79,27 @@ services:
       EC2_VOLUME_SIZE: ${EC2_VOLUME_SIZE}
       SECURITY_GROUP_NAME: ${SECURITY_GROUP_NAME}
       SECRET_KEY: ${SECRET_KEY}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_EXPIRY_HOURS: ${JWT_EXPIRY_HOURS:-1}
+
+      # ── First-admin bootstrap ─────────────────────────────────────────
+      # Set these once to auto-create the admin account on first startup.
+      # After the account is created these values are ignored (idempotent).
+      # In production store these in AWS Secrets Manager as JSON:
+      #   { "ADMIN_EMAIL": "...", "ADMIN_PASSWORD": "..." }
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
 
     ports:
-      - "5000:5000"     # exposed so browser can reach API directly if needed
+      - "${APP_PORT:-5000}:${APP_PORT:-5000}"     # exposed so browser can reach API directly if needed
 
     depends_on:
       postgres:
         condition: service_healthy   # wait for postgres to be ready before starting
 
     volumes:
-      - ./backend/ml-deploy-key.pem:/app/backend/ml-deploy-key.pem:ro
+      # ⚠️  Destination must match PEM_KEY_PATH env var exactly
+      - ./backend/ml-deploy-key.pem:/app/ml-deploy-key.pem:ro
       
     networks:
       - app_network
@@ -97,8 +115,12 @@ services:
     container_name: autodeploy_frontend
     restart: unless-stopped
 
+    environment:
+      BACKEND_HOST: backend
+      BACKEND_PORT: "5000"
+
     ports:
-      - "80:80"         # access the app at http://localhost (no port number needed)
+      - "${NGINX_HTTP_PORT:-80}:80"       # access the app at http://localhost
 
     depends_on:
       - backend         # nginx proxies /api/* to backend — backend must be up first

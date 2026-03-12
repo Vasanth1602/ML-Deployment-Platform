@@ -1,10 +1,13 @@
 /**
  * API Service Layer
- * Handles all HTTP requests to the Flask backend
- * Centralizes error handling and response formatting
+ * Handles all HTTP requests to the Flask backend.
+ * Automatically attaches JWT Bearer token from localStorage.
+ * Redirects to /login on 401 (token expired or missing).
  */
 
 import { API_BASE_URL } from '../utils/constants';
+
+const TOKEN_KEY = 'ml_deploy_token';
 
 class ApiService {
     constructor() {
@@ -12,39 +15,76 @@ class ApiService {
     }
 
     /**
-     * Generic fetch wrapper with error handling
+     * Generic fetch wrapper.
+     * - Auto-attaches Authorization: Bearer <token> header if a token exists.
+     * - On 401: clears the stored token and redirects to /login.
      */
     async request(endpoint, options = {}) {
-        const url = `${this.baseURL}${endpoint}`;
+        const url   = `${this.baseURL}${endpoint}`;
+        const token = localStorage.getItem(TOKEN_KEY);
+
         const config = {
             headers: {
                 'Content-Type': 'application/json',
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
                 ...options.headers,
             },
             ...options,
         };
 
-        try {
-            const response = await fetch(url, config);
-            const data = await response.json();
+        const response = await fetch(url, config);
 
-            if (!response.ok) {
-                throw new Error(data.error || `HTTP error! status: ${response.status}`);
+        // Handle 401 — token expired or tampered with
+        if (response.status === 401) {
+            localStorage.removeItem(TOKEN_KEY);
+            // Only redirect if not already on an auth page to avoid loop
+            if (!window.location.pathname.startsWith('/login') &&
+                !window.location.pathname.startsWith('/register')) {
+                window.location.href = '/login';
             }
-
-            return data;
-        } catch (error) {
-            console.error(`API Error [${endpoint}]:`, error);
-            throw error;
         }
+
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+            throw new Error(data.error || `HTTP error! status: ${response.status}`);
+        }
+
+        return data;
     }
 
-    // Health Check
+    // ── Auth ──────────────────────────────────────────────────────────────────
+
+    async login({ email, password }) {
+        return this.request('/api/auth/login', {
+            method: 'POST',
+            body: JSON.stringify({ email, password }),
+        });
+    }
+
+    async register({ email, password }) {
+        return this.request('/api/auth/register', {
+            method: 'POST',
+            body: JSON.stringify({ email, password }),
+        });
+    }
+
+    async logout() {
+        return this.request('/api/auth/logout', { method: 'POST' });
+    }
+
+    async getMe() {
+        return this.request('/api/auth/me');
+    }
+
+    // ── Health ────────────────────────────────────────────────────────────────
+
     async healthCheck() {
         return this.request('/api/health');
     }
 
-    // Deployment Endpoints
+    // ── Deployments ───────────────────────────────────────────────────────────
+
     async deploy(deploymentData) {
         return this.request('/api/deploy', {
             method: 'POST',
@@ -67,44 +107,49 @@ class ApiService {
         });
     }
 
-    // Applications Endpoints
+    // ── Applications ──────────────────────────────────────────────────────────
+
     async getApplications() {
         return this.request('/api/applications');
     }
 
-    // Instance Endpoints
+    async getApplication(appId) {
+        return this.request(`/api/applications/${appId}`);
+    }
+
+    // ── Instances ─────────────────────────────────────────────────────────────
+
     async getInstances() {
         return this.request('/api/instances');
     }
 
     async stopInstance(instanceId) {
-        return this.request(`/api/instances/${instanceId}/stop`, {
-            method: 'POST',
-        });
+        return this.request(`/api/instances/${instanceId}/stop`, { method: 'POST' });
     }
 
     async startInstance(instanceId) {
-        return this.request(`/api/instances/${instanceId}/start`, {
-            method: 'POST',
-        });
+        return this.request(`/api/instances/${instanceId}/start`, { method: 'POST' });
     }
 
     async terminateInstance(instanceId) {
-        return this.request(`/api/instances/${instanceId}/terminate`, {
-            method: 'POST',
-        });
+        return this.request(`/api/instances/${instanceId}/terminate`, { method: 'POST' });
     }
 
-    // Configuration
-    async validateConfig() {
-        return this.request('/api/config/validate');
+    async syncInstances() {
+        return this.request('/api/instances/sync', { method: 'POST' });
     }
 
-    // Stats Endpoint
+    // ── Stats ─────────────────────────────────────────────────────────────────
+
     async getStats() {
         return this.request('/api/stats');
     }
+
+    // ── Config ────────────────────────────────────────────────────────────────
+
+    async validateConfig() {
+        return this.request('/api/config/validate');
+    }
 }
 
-// Export singleton instance
 export const api = new ApiService();

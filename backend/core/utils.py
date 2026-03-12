@@ -11,9 +11,11 @@ import boto3
 from typing import Tuple, Optional, List
 import requests
 
+from ..config import config
+
 logger = logging.getLogger(__name__)
 
-PEM_PATH = '/app/ml-deploy-key.pem'
+PEM_PATH = config.PEM_KEY_PATH
 
 
 def load_pem_from_secrets_manager() -> Optional[str]:

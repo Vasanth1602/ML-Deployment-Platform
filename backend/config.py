@@ -23,7 +23,8 @@ class Config:
     AWS_KEY_PAIR_NAME = os.getenv('AWS_KEY_PAIR_NAME')
     
     # EC2 Configuration
-    EC2_AMI_ID = os.getenv('EC2_AMI_ID', 'ami-0c55b159cbfafe1f0')
+    # ⚠️  No default — AMI IDs are region-specific. Must be set explicitly in .env.
+    EC2_AMI_ID = os.getenv('EC2_AMI_ID')
     EC2_INSTANCE_TYPE = os.getenv('EC2_INSTANCE_TYPE', 't2.micro')
     EC2_VOLUME_SIZE = int(os.getenv('EC2_VOLUME_SIZE', '20'))
     
@@ -34,7 +35,33 @@ class Config:
     # Application Configuration
     APP_PORT = int(os.getenv('APP_PORT', '5000'))
     FLASK_ENV = os.getenv('FLASK_ENV', 'development')
+    # ⚠️  Defaults are intentionally weak — must be overridden via env in production.
+    # validate() raises errors if production mode detects default values.
     SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
+
+    # JWT Authentication
+    JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY', os.getenv('SECRET_KEY', 'dev-jwt-secret-change-in-production'))
+    JWT_EXPIRY_HOURS = int(os.getenv('JWT_EXPIRY_HOURS', '1'))
+
+    # CORS / Origin Configuration
+    # Comma-separated list of allowed origins for API (Flask-CORS) and WebSocket (SocketIO).
+    # Production example: https://yourdomain.com
+    # Development: left empty so dev-specific origins are appended automatically by app.py
+    CORS_ORIGINS = os.getenv('CORS_ORIGINS', '')
+    FRONTEND_URL = os.getenv('FRONTEND_URL', '')
+    DEV_CORS_ORIGINS = os.getenv(
+        'DEV_CORS_ORIGINS',
+        'http://localhost:5173,http://localhost:80,http://localhost:3000'
+    )
+
+    @classmethod
+    def get_cors_origins_list(cls) -> list:
+        """Return CORS_ORIGINS as a parsed list; falls back to dev list in development."""
+        if cls.CORS_ORIGINS:
+            return [o.strip() for o in cls.CORS_ORIGINS.split(',') if o.strip()]
+        if cls.FLASK_ENV == 'development':
+            return [o.strip() for o in cls.DEV_CORS_ORIGINS.split(',') if o.strip()]
+        return []
     
     # Docker Configuration
     DOCKER_CONTAINER_PORT = int(os.getenv('DOCKER_CONTAINER_PORT', '8000'))
@@ -52,6 +79,12 @@ class Config:
     LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
     LOG_FILE = os.getenv('LOG_FILE', 'deployment.log')
     
+    # PEM key path — single source of truth for where the key is written and read
+    PEM_KEY_PATH = os.getenv('PEM_KEY_PATH', '/app/ml-deploy-key.pem')
+
+    # Static folder — must point to Vite's build output, not source
+    STATIC_FOLDER = os.getenv('STATIC_FOLDER', '../frontend/dist')
+
     # NGINX Configuration
     ENABLE_NGINX = os.getenv('ENABLE_NGINX', 'true').lower() == 'true'
     NGINX_HTTP_PORT = int(os.getenv('NGINX_HTTP_PORT', '80'))
@@ -103,7 +136,21 @@ class Config:
         # AWS credentials are NOT validated here — they come from the IAM Task
         # Role at runtime (no static keys anywhere in this codebase).
         if not cls.AWS_KEY_PAIR_NAME:
-            errors.append("AWS_KEY_PAIR_NAME is required")
+            errors.append('AWS_KEY_PAIR_NAME is required')
+
+        if not cls.EC2_AMI_ID:
+            errors.append('EC2_AMI_ID is required (AMI IDs are region-specific — no safe default exists)')
+
+        # In production, reject known-weak default secrets
+        if cls.FLASK_ENV != 'development':
+            if cls.SECRET_KEY in ('dev-secret-key-change-in-production', ''):
+                errors.append('SECRET_KEY must be set to a strong random value in production')
+            if cls.JWT_SECRET_KEY in ('dev-jwt-secret-change-in-production', ''):
+                errors.append('JWT_SECRET_KEY must be set to a strong random value in production')
+            if not cls.FRONTEND_URL:
+                errors.append('FRONTEND_URL must be set in production (required for SocketIO CORS)')
+            if not cls.CORS_ORIGINS:
+                errors.append('CORS_ORIGINS must be set in production')
 
         return errors
     
