@@ -931,7 +931,7 @@ Before running `terraform apply` for Phase 6, the following items must be resolv
 
 ---
 
-## Repository Analysis
+# Repository Analysis
 
 > This section documents facts **extracted directly from repository files**. Nothing here is assumed or inferred beyond what the code confirms. Where a property cannot be determined from repository files, it is marked as **"Not explicitly defined in repository"**.
 
@@ -1456,7 +1456,7 @@ These items indicate an authentication phase is actively under development but n
 
 ---
 
-## Infrastructure as Code Architecture
+# Infrastructure as Code Architecture
 
 > This section defines the Terraform project layout, module responsibilities, environment structure, and phase execution order. No Terraform code is written here — this is a design specification to be implemented in Phase 1 through Phase 8.
 
