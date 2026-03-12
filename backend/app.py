@@ -3,6 +3,8 @@ Flask application factory.
 Initializes the app, registers Blueprints, sets up DB and SocketIO.
 """
 
+import os
+
 from flask import Flask, send_from_directory, jsonify
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
@@ -26,7 +28,12 @@ def create_app() -> Flask:
     """
     app = Flask(__name__, static_folder='../frontend', static_url_path='')
     app.config['SECRET_KEY'] = config.SECRET_KEY
-    CORS(app)
+
+    # Restrict CORS to known origin in production; '*' is only a safe fallback
+    # for local dev. Set CORS_ORIGINS env var in ECS Task Definition, e.g.:
+    #   CORS_ORIGINS=https://yourdomain.com
+    _cors_origins = os.getenv('CORS_ORIGINS', '*')
+    CORS(app, origins=_cors_origins)
 
     # ── Logging ───────────────────────────────────────────────────────────
     logger = configure_logging(
@@ -37,7 +44,7 @@ def create_app() -> Flask:
     # ── SocketIO ──────────────────────────────────────────────────────────
     socketio.init_app(
         app,
-        cors_allowed_origins="*",
+        cors_allowed_origins=os.getenv('CORS_ORIGINS', '*'),
         ping_timeout=300,     # 5 min — longer than any deployment
         ping_interval=25,
         async_mode='threading',
@@ -135,11 +142,10 @@ def _ensure_default_tenant(logger):
 if __name__ == '__main__':
     config_errors = config.validate()
     if config_errors:
-        import sys
         for err in config_errors:
-            print(f'[CONFIG ERROR] {err}')
-        print('Please configure your .env file. See .env.example for reference.')
-        sys.exit(1)
+            print(f'[CONFIG WARNING] {err}')
+        print('AWS deployment features will be unavailable until these are configured.')
+        # Do NOT exit — the web UI and DB work fine without AWS credentials.
 
     _app = create_app()
     socketio.run(

@@ -3,7 +3,10 @@
  */
 
 // API Configuration
-export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+// In production (Docker + Nginx), VITE_API_URL is not set at build time so this
+// resolves to '' — all /api/* calls are relative and proxied by Nginx to the backend.
+// In local dev without Docker, set VITE_API_URL=http://localhost:5000 in .env.local
+export const API_BASE_URL = import.meta.env.VITE_API_URL ?? '';
 
 // Deployment Steps
 export const DEPLOYMENT_STEPS = [

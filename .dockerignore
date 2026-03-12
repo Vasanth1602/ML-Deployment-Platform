@@ -41,6 +41,9 @@ tests/
 .DS_Store
 Thumbs.db
 
-# Secrets — these are passed via docker-compose environment, not baked into image
-# .env is intentionally NOT excluded — it is copied into backend image
-# so alembic can read DATABASE_URL during migration
+# Secrets — NEVER bake into Docker images.
+# .env is excluded from build context; all secrets are injected at runtime
+# via ECS Task Definition env vars / Secrets Manager, or docker-compose env: block.
+.env
+.env.*
+!.env.example

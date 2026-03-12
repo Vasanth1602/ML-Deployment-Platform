@@ -21,9 +21,9 @@ services:
     restart: unless-stopped
 
     environment:
-      POSTGRES_USER: dbadmin
-      POSTGRES_PASSWORD: AutoDeploy123
-      POSTGRES_DB: autodeploy
+      POSTGRES_USER: ${POSTGRES_USER:-dbadmin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-AutoDeploy123}
+      POSTGRES_DB: ${POSTGRES_DB:-autodeploy}
 
     ports:
       - "5432:5432"     # exposed so you can still connect from host (psql CLI, pgAdmin)
@@ -32,7 +32,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
 
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U dbadmin -d autodeploy"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dbadmin} -d ${POSTGRES_DB:-autodeploy}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -55,11 +55,15 @@ services:
       # ⚠️ CRITICAL: use service name "postgres" NOT "localhost"
       # Inside Docker, localhost = the backend container itself
       # "postgres" = the postgres service on the shared Docker network
-      DATABASE_URL: postgresql://dbadmin:AutoDeploy123@postgres:5432/autodeploy
+      DATABASE_URL: postgresql://${POSTGRES_USER:-dbadmin}:${POSTGRES_PASSWORD:-AutoDeploy123}@postgres:5432/${POSTGRES_DB:-autodeploy}
 
       # Flask settings
       FLASK_ENV: development
       APP_PORT: "5000"
+
+      # EC2_KEY_DIR tells SSHClient where to look for .pem files inside the container.
+      # The volume mount below places the key at /app/backend/<keyname>.pem.
+      EC2_KEY_DIR: /app/backend
 
       # AWS credentials (passed through from host .env)
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
@@ -79,9 +83,15 @@ services:
       postgres:
         condition: service_healthy   # wait for postgres to be ready before starting
 
+    # ── SSH key for EC2 deployments ────────────────────────────────────────────
+    # The PEM file must exist on the host BEFORE running `docker compose up`.
+    # Create it first:  touch backend/ml-deploy-key.pem && chmod 600 backend/ml-deploy-key.pem
+    # Then paste your AWS key pair content into it.
+    # For ECS Fargate: do NOT use a volume. Instead inject the key via
+    # AWS Secrets Manager and reference it in the Task Definition secrets block.
     volumes:
       - ./backend/ml-deploy-key.pem:/app/backend/ml-deploy-key.pem:ro
-      
+
     networks:
       - app_network
 
@@ -98,6 +108,12 @@ services:
 
     ports:
       - "80:80"         # access the app at http://localhost (no port number needed)
+
+    environment:
+      # Must match the service name on the Docker network so nginx envsubst
+      # can build the upstream: proxy_pass http://backend:5000
+      BACKEND_HOST: backend
+      BACKEND_PORT: "5000"
 
     depends_on:
       - backend         # nginx proxies /api/* to backend — backend must be up first

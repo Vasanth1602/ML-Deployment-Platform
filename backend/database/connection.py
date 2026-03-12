@@ -98,15 +98,29 @@ db_session = scoped_session(SessionLocal)
 # ── Public API ────────────────────────────────────────────────────────────────
 def init_db():
     """
-    Create all tables if they don't already exist.
-    Safe to call multiple times — it's idempotent (won't drop/recreate existing tables).
+    Initialise the database at startup.
+
+    - SQLite (local dev): creates all tables directly via SQLAlchemy so that
+      `python backend/app.py` works out of the box without running Alembic.
+    - PostgreSQL (Docker / ECS / EB): schema is owned exclusively by Alembic
+      (`alembic upgrade head` runs in the Dockerfile CMD before Gunicorn starts).
+      create_all() is intentionally skipped to prevent schema drift between the
+      ORM models and the versioned migration history.
 
     Call this once at Flask app startup:
         with app.app_context():
             init_db()
     """
-    Base.metadata.create_all(bind=engine)
-    logger.info('[OK] Database initialized: %s', DATABASE_URL.split('@')[-1])  # hide credentials
+    if DATABASE_URL.startswith('sqlite'):
+        Base.metadata.create_all(bind=engine)
+        logger.info('[OK] SQLite schema created: %s', DATABASE_URL)
+    else:
+        # PostgreSQL: verify connectivity only — schema managed by Alembic.
+        if not check_db_connection():
+            raise RuntimeError(
+                f'Cannot connect to database at startup: {_db_label()}'
+            )
+        logger.info('[OK] Database connected: %s', DATABASE_URL.split('@')[-1])
     print(f'[OK] Database initialized ({_db_label()})')
 
 

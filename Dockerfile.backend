@@ -1,6 +1,22 @@
 # ============================================================
 # Backend Dockerfile
 # ============================================================
+#
+# Build (always from the PROJECT ROOT, not from backend/):
+#   docker build -f Dockerfile.backend -t autodeploy-backend .
+#
+# Run standalone (requires a reachable PostgreSQL first):
+#   docker run --rm \
+#     -e DATABASE_URL=postgresql://dbadmin:AutoDeploy123@<db-host>:5432/autodeploy \
+#     -e SECRET_KEY=<your-secret> \
+#     -e APP_PORT=5000 \
+#     -p 5000:5000 \
+#     autodeploy-backend
+#
+# ⚠️  DATABASE_URL must point to a running PostgreSQL instance.
+#    alembic upgrade head runs FIRST in CMD — if the DB is unreachable the
+#    container exits immediately before Gunicorn starts.
+# ============================================================
 
 FROM python:3.11-slim
 
@@ -25,10 +41,16 @@ COPY alembic.ini .
 # Ensure Python can resolve backend package
 ENV PYTHONPATH=/app
 
-# Copy environment file
-COPY .env .
-
+# Runtime port — default 5000. Override with APP_PORT env var at `docker run`.
+# NOTE: EXPOSE is build-time documentation only. Docker bakes it as 5000 at build time.
+# If you change APP_PORT at runtime (e.g. APP_PORT=8080) you must also adjust
+# your -p flag:  docker run -e APP_PORT=8080 -p 8080:8080 ...
+# EXPOSE does NOT update automatically. For -P (auto-publish) keep APP_PORT=5000.
+ENV APP_PORT=5000
 EXPOSE 5000
 
-# Run migrations then start Gunicorn using factory pattern
-CMD ["sh", "-c", "alembic upgrade head && gunicorn -k gthread -w 1 --threads 4 --bind 0.0.0.0:5000 --timeout 300 \"backend.app:create_app()\""]
+# Run migrations then start Gunicorn using factory pattern.
+# APP_PORT defaults to 5000. Override via env var in ECS Task Definition / EB / docker-compose.
+# Note: alembic upgrade head requires DATABASE_URL to be set and the DB to be reachable.
+# In ECS/EB all config is injected as environment variables — .env is never copied into the image.
+CMD ["sh", "-c", "alembic upgrade head && gunicorn -k gthread -w 1 --threads 4 --bind 0.0.0.0:${APP_PORT:-5000} --timeout 300 \"backend.app:create_app()\""]
