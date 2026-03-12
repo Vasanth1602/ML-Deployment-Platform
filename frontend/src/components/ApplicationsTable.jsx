@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ExternalLink, RefreshCw, Search, CheckCircle, XCircle, Clock } from 'lucide-react';
+import { ExternalLink, RefreshCw, Search, CheckCircle, XCircle, Clock, Ban, Hourglass, PauseCircle, Trash2 } from 'lucide-react';
 
 export default function ApplicationsTable({ deployments = [], isLoading, onRefresh }) {
     const [searchTerm, setSearchTerm] = useState('');
@@ -12,7 +12,7 @@ export default function ApplicationsTable({ deployments = [], isLoading, onRefre
             app.github_url?.toLowerCase().includes(searchLower) ||
             app.instance_id?.toLowerCase().includes(searchLower)
         );
-});
+    });
 
     // Status badge component
     const StatusBadge = ({ status }) => {
@@ -22,19 +22,44 @@ export default function ApplicationsTable({ deployments = [], isLoading, onRefre
                 text: 'Success',
                 className: 'bg-green-500/10 text-green-500 border-green-500/20'
             },
+            active: {
+                icon: CheckCircle,
+                text: 'Active',
+                className: 'bg-green-500/10 text-green-500 border-green-500/20'
+            },
             failed: {
                 icon: XCircle,
                 text: 'Failed',
                 className: 'bg-red-500/10 text-red-500 border-red-500/20'
             },
+            cancelled: {
+                icon: Ban,
+                text: 'Cancelled',
+                className: 'bg-orange-500/10 text-orange-500 border-orange-500/20'
+            },
+            stopped: {
+                icon: PauseCircle,
+                text: 'Stopped',
+                className: 'bg-yellow-500/10 text-yellow-600 border-yellow-500/20'
+            },
+            terminated: {
+                icon: Trash2,
+                text: 'Terminated',
+                className: 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20'
+            },
             in_progress: {
                 icon: Clock,
                 text: 'In Progress',
                 className: 'bg-blue-500/10 text-blue-500 border-blue-500/20'
+            },
+            pending: {
+                icon: Hourglass,
+                text: 'Pending',
+                className: 'bg-muted/50 text-muted-foreground border-border'
             }
         };
 
-        const config = configs[status] || configs.in_progress;
+        const config = configs[status] || configs.pending;
         const Icon = config.icon;
 
         return (

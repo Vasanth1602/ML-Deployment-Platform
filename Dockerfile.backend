@@ -2,33 +2,46 @@
 # Backend Dockerfile
 # ============================================================
 
-FROM python:3.11-slim
+# Use latest 3.12 patch to pick up security fixes automatically.
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Install system deps
 RUN apt-get update && apt-get install -y \
-    gcc \
-    libpq-dev \
-    openssh-client \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+  gcc \
+  libpq-dev \
+  openssh-client \
+  curl \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy backend source
 COPY backend/ ./backend/
 COPY alembic/ ./alembic/
 COPY alembic.ini .
 
-# Ensure Python can resolve backend package
 ENV PYTHONPATH=/app
 
-# Copy environment file
-COPY .env .
+RUN useradd -m appuser && chown -R appuser:appuser /app
+USER appuser
 
 EXPOSE 5000
 
-# Run migrations then start Gunicorn using factory pattern
-CMD ["sh", "-c", "alembic upgrade head && gunicorn -k gthread -w 1 --threads 4 --bind 0.0.0.0:5000 --timeout 300 \"backend.app:create_app()\""]
+# APP_PORT defaults to 5000; override via env if changed
+HEALTHCHECK --interval=30s --timeout=5s \
+  CMD curl -f http://localhost:${APP_PORT:-5000}/api/health || exit 1
+
+# Startup:
+#   Gunicorn calls create_app() which fetches the SSH .pem from Secrets Manager
+#   via the IAM Task Role. No AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY needed.
+#
+# DB Migrations:
+#   Do NOT run alembic here — on ECS with N replicas every task would race.
+#   Run migrations as a one-off ECS task before deploying a new version:
+#     aws ecs run-task --overrides '{"containerOverrides":[{"name":"backend","command":["alembic","upgrade","head"]}]}'
+#   For local docker-compose, run manually:  docker compose run backend alembic upgrade head
+CMD ["sh", "-c", "gunicorn -k gthread -w 1 --threads 8 --bind 0.0.0.0:${APP_PORT:-5000} --timeout 300 'backend.app:create_app()'"]

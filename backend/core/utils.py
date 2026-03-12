@@ -3,13 +3,59 @@ Utility functions for the Automated Deployment Framework.
 Provides SSH connection, remote command execution, and helper utilities.
 """
 
+import os
 import time
 import logging
 import paramiko
+import boto3
 from typing import Tuple, Optional, List
 import requests
 
+from ..config import config
+
 logger = logging.getLogger(__name__)
+
+PEM_PATH = config.PEM_KEY_PATH
+
+
+def load_pem_from_secrets_manager() -> Optional[str]:
+    """
+    Fetch the SSH private key from AWS Secrets Manager and write it to disk.
+
+    Uses PEM_SECRET_NAME env var to find the secret.
+    Returns the path to the written PEM file, or None if PEM_SECRET_NAME is not set
+    (e.g. local dev without Secrets Manager).
+
+    Called once at Flask app startup (create_app) so the key is ready
+    before any deployment SSH attempt.
+    """
+    secret_name = os.getenv('PEM_SECRET_NAME')
+
+    if not secret_name:
+        logger.warning(
+            '[PEM] PEM_SECRET_NAME not set — skipping Secrets Manager fetch. '
+            'SSH deployments will fail unless the key exists at %s', PEM_PATH
+        )
+        return None
+
+    region = os.getenv('AWS_REGION', 'ap-south-1')
+
+    try:
+        client = boto3.client('secretsmanager', region_name=region)
+        response = client.get_secret_value(SecretId=secret_name)
+        pem_content = response['SecretString']
+
+        with open(PEM_PATH, 'w') as f:
+            f.write(pem_content)
+        os.chmod(PEM_PATH, 0o600)
+
+        logger.info('[OK] PEM key fetched from Secrets Manager → %s', PEM_PATH)
+        return PEM_PATH
+
+    except Exception as e:
+        logger.error('[PEM] Failed to fetch PEM from Secrets Manager: %s', e)
+        raise
+
 
 
 class SSHClient:

@@ -7,6 +7,8 @@
 import { io } from 'socket.io-client';
 import { API_BASE_URL } from '../utils/constants';
 
+const TOKEN_KEY = 'ml_deploy_token';
+
 class SocketService {
     constructor() {
         this.socket = null;
@@ -21,14 +23,19 @@ class SocketService {
             return this.socket;
         }
 
+        // Pass JWT via query param — backend's connect handler verifies it
+        // and calls disconnect() if it is missing, expired, or invalid.
+        const token = localStorage.getItem(TOKEN_KEY);
+
         this.socket = io(API_BASE_URL, {
-            transports: ['polling'],  // Use polling only - more reliable for long operations
+            transports: ['websocket', 'polling'],
             reconnection: true,
             reconnectionDelay: 1000,
             reconnectionAttempts: 10,
             timeout: 20000,
-            pingTimeout: 300000,  // 5 minutes - match backend
-            pingInterval: 25000,  // 25 seconds - match backend
+            pingTimeout: 300000,
+            pingInterval: 25000,
+            ...(token ? { query: { token } } : {}),
         });
 
         this.socket.on('connect', () => {
@@ -94,6 +101,24 @@ class SocketService {
     offDeploymentComplete(callback) {
         if (this.socket) {
             this.socket.off('deployment_complete', callback);
+        }
+    }
+
+    /**
+     * Subscribe to deployment_cancelled — emitted by the backend when the
+     * orchestrator's DeploymentCancelled exception handler finishes cleanup.
+     */
+    onDeploymentCancelled(callback) {
+        if (!this.socket) this.connect();
+        this.socket.on('deployment_cancelled', callback);
+    }
+
+    /**
+     * Unsubscribe from deployment_cancelled
+     */
+    offDeploymentCancelled(callback) {
+        if (this.socket) {
+            this.socket.off('deployment_cancelled', callback);
         }
     }
 

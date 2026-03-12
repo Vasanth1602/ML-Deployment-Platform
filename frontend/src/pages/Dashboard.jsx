@@ -1,7 +1,10 @@
-import { useEffect, useState } from 'react';
-import { Package, Rocket, AlertCircle, Server } from 'lucide-react';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { Package, Rocket, AlertCircle, Server, RefreshCw } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import StatCard from '../components/StatCard';
 import { api } from '../services/api';
+
+const REFRESH_INTERVAL = 30_000; // 30 seconds
 
 export default function Dashboard() {
     const [stats, setStats] = useState({
@@ -11,26 +14,35 @@ export default function Dashboard() {
         running_instances: 0,
     });
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+    const [lastUpdated, setLastUpdated] = useState(null);
+    const [refreshing, setRefreshing] = useState(false);
+    const intervalRef = useRef(null);
 
-    useEffect(() => {
-        const loadStats = async () => {
-            try {
-                setLoading(true);
-
-                const response = await api.getStats();
-
-                if (response.success) {
-                    setStats(response.stats);
-                }
-            } catch (error) {
-                console.error('Failed to load dashboard stats:', error);
-            } finally {
-                setLoading(false);
-                }
-        };
-
-        loadStats();
+    const loadStats = useCallback(async (isManual = false) => {
+        if (isManual) setRefreshing(true);
+        setError(null);
+        try {
+            const response = await api.getStats();
+            if (response.success) {
+                setStats(response.stats);
+                setLastUpdated(new Date());
+            }
+        } catch (err) {
+            console.error('Failed to load dashboard stats:', err);
+            setError('Failed to load stats. Check backend connection.');
+        } finally {
+            setLoading(false);
+            setRefreshing(false);
+        }
     }, []);
+
+    // Initial load + auto-refresh every 30s
+    useEffect(() => {
+        loadStats();
+        intervalRef.current = setInterval(() => loadStats(), REFRESH_INTERVAL);
+        return () => clearInterval(intervalRef.current);
+    }, [loadStats]);
 
     if (loading) {
         return (
@@ -46,38 +58,47 @@ export default function Dashboard() {
     return (
         <div className="space-y-6">
             {/* Page Header */}
-            <div>
-                <h1 className="text-2xl font-bold text-foreground">Overview</h1>
-                <p className="text-muted-foreground mt-1">
-                    Monitor your deployments and infrastructure at a glance
-                </p>
+            <div className="flex items-center justify-between">
+                <div>
+                    <h1 className="text-2xl font-bold text-foreground">Overview</h1>
+                    <p className="text-muted-foreground mt-1">
+                        Monitor your deployments and infrastructure at a glance
+                    </p>
+                </div>
+                <div className="flex items-center gap-3">
+                    {lastUpdated && (
+                        <span className="text-xs text-muted-foreground">
+                            Updated {lastUpdated.toLocaleTimeString()}
+                        </span>
+                    )}
+                    <button
+                        onClick={() => loadStats(true)}
+                        disabled={refreshing}
+                        className="p-2 rounded-lg border border-border hover:bg-secondary transition-colors disabled:opacity-50"
+                        title="Refresh"
+                    >
+                        <RefreshCw className={`w-4 h-4 text-muted-foreground ${refreshing ? 'animate-spin' : ''}`} />
+                    </button>
+                </div>
             </div>
+
+            {/* Error Banner */}
+            {error && (
+                <div className="flex items-center gap-2 p-4 bg-destructive/10 border border-destructive/30 rounded-lg text-sm text-destructive">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    {error}
+                </div>
+            )}
 
             {/* Stats Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                <StatCard
-                    title="Total Applications"
-                    value={stats.total_applications}
-                    icon={Package}
-                />
-                <StatCard
-                    title="Active Deployments"
-                    value={stats.active_deployments}
-                    icon={Rocket}
-                />
-                <StatCard
-                    title="Failed Deployments"
-                    value={stats.failed_deployments}
-                    icon={AlertCircle}
-                />
-                <StatCard
-                    title="Running Instances"
-                    value={stats.running_instances}
-                    icon={Server}
-                />
+                <StatCard title="Total Applications" value={stats.total_applications} icon={Package} />
+                <StatCard title="Active Deployments" value={stats.active_deployments} icon={Rocket} />
+                <StatCard title="Failed Deployments" value={stats.failed_deployments} icon={AlertCircle} />
+                <StatCard title="Running Instances" value={stats.running_instances} icon={Server} />
             </div>
 
-            {/* Recent Activity Section */}
+            {/* Recent Activity */}
             <div className="bg-card border border-border rounded-lg p-6">
                 <h3 className="text-lg font-semibold text-foreground mb-4">Recent Activity</h3>
                 <div className="text-center py-12 text-muted-foreground">
@@ -90,8 +111,8 @@ export default function Dashboard() {
             <div className="bg-card border border-border rounded-lg p-6">
                 <h3 className="text-lg font-semibold text-foreground mb-4">Quick Actions</h3>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <a
-                        href="/deploy"
+                    <Link
+                        to="/deploy"
                         className="flex items-center gap-3 p-4 border border-border rounded-lg hover:border-primary hover:bg-secondary/50 transition-colors"
                     >
                         <Rocket className="w-5 h-5 text-primary" />
@@ -99,9 +120,9 @@ export default function Dashboard() {
                             <p className="font-medium text-foreground">New Deployment</p>
                             <p className="text-sm text-muted-foreground">Deploy from GitHub</p>
                         </div>
-                    </a>
-                    <a
-                        href="/applications"
+                    </Link>
+                    <Link
+                        to="/applications"
                         className="flex items-center gap-3 p-4 border border-border rounded-lg hover:border-primary hover:bg-secondary/50 transition-colors"
                     >
                         <Package className="w-5 h-5 text-primary" />
@@ -109,9 +130,9 @@ export default function Dashboard() {
                             <p className="font-medium text-foreground">View Applications</p>
                             <p className="text-sm text-muted-foreground">Manage deployments</p>
                         </div>
-                    </a>
-                    <a
-                        href="/instances"
+                    </Link>
+                    <Link
+                        to="/instances"
                         className="flex items-center gap-3 p-4 border border-border rounded-lg hover:border-primary hover:bg-secondary/50 transition-colors"
                     >
                         <Server className="w-5 h-5 text-primary" />
@@ -119,7 +140,7 @@ export default function Dashboard() {
                             <p className="font-medium text-foreground">EC2 Instances</p>
                             <p className="text-sm text-muted-foreground">Manage infrastructure</p>
                         </div>
-                    </a>
+                    </Link>
                 </div>
             </div>
         </div>

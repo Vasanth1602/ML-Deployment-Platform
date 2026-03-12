@@ -5,6 +5,7 @@ This is a sample application to test the Automated Deployment Framework
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+import os
 import re
 
 app = Flask(__name__)
@@ -113,4 +114,5 @@ def analyze():
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8000, debug=False)
+    port = int(os.getenv('PORT', '8000'))
+    app.run(host='0.0.0.0', port=port, debug=False)

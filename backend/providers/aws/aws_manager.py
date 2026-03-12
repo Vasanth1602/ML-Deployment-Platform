@@ -18,21 +18,26 @@ class AWSManager:
     """Manages AWS EC2 instances and related resources."""
     
     def __init__(self):
-        """Initialize AWS Manager with boto3 clients."""
+        """
+        Initialize AWS Manager with boto3 clients.
+
+        Credentials are intentionally NOT passed here.
+        boto3 resolves them via its default credential chain:
+          1. Environment variables (local dev: AWS_PROFILE / aws configure)
+          2. ECS container metadata endpoint  ← active when running on Fargate
+          3. EC2 instance metadata (IMDS)
+        This means no keys are ever stored in code, config, or env vars.
+        """
         self.ec2_client = boto3.client(
             'ec2',
-            aws_access_key_id=config.AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=config.AWS_SECRET_ACCESS_KEY,
             region_name=config.AWS_REGION
         )
-        
+
         self.ec2_resource = boto3.resource(
             'ec2',
-            aws_access_key_id=config.AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=config.AWS_SECRET_ACCESS_KEY,
             region_name=config.AWS_REGION
         )
-        
+
         logger.info(f"AWS Manager initialized for region: {config.AWS_REGION}")
     
     def create_or_get_security_group(self, group_name: str = None) -> str:

@@ -26,10 +26,29 @@ from sqlalchemy.orm import Session
 from .models import (
     Application, ApplicationInstance, EC2Instance,
     Deployment, DeploymentStep, DeploymentLog,
-    EnvironmentVariable, Tenant,
+    EnvironmentVariable, Tenant, User,
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# UserRepository
+# ─────────────────────────────────────────────────────────────────────────────
+class UserRepository:
+    def __init__(self, db: Session):
+        self.db = db
+
+    def get_by_id(self, user_id: str) -> Optional['User']:
+        return self.db.query(User).filter_by(id=user_id).first()
+
+    def get_by_email(self, email: str) -> Optional['User']:
+        return self.db.query(User).filter_by(email=email.strip().lower()).first()
+
+    def list_all(self) -> List['User']:
+        return (self.db.query(User)
+                .order_by(User.created_at.desc())
+                .all())
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -97,10 +116,17 @@ class ApplicationRepository:
     def get_or_create(self, tenant_id: str, name: str, github_url: str,
                       container_port: int, **kwargs) -> Application:
         """
-        Return existing app for this tenant+github_url, or create a new one.
-        Useful so repeated deploys of the same repo update the same app record.
+        Return existing app for this tenant+github_url+user, or create a new one.
+        Scoped by created_by_user_id so different users deploying the same
+        repo get separate Application rows (and separate instance ownership).
         """
-        existing = self.get_by_github_url(tenant_id, github_url)
+        user_id  = kwargs.get('created_by_user_id')
+        q = self.db.query(Application).filter_by(
+            tenant_id=tenant_id, github_url=github_url
+        )
+        if user_id:
+            q = q.filter(Application.created_by_user_id == user_id)
+        existing = q.first()
         if existing:
             return existing
         return self.create(tenant_id, name, github_url, container_port, **kwargs)
@@ -122,6 +148,37 @@ class ApplicationRepository:
                 .filter_by(tenant_id=tenant_id)
                 .order_by(Application.created_at.desc())
                 .all())
+
+    def list_all_admin(self, tenant_id: str) -> List[Application]:
+        """Admin view — returns all apps in the tenant."""
+        return (self.db.query(Application)
+                .filter_by(tenant_id=tenant_id)
+                .order_by(Application.created_at.desc())
+                .all())
+
+    def list_by_user(self, tenant_id: str, user_id: str) -> List[Application]:
+        """Non-admin view — returns only apps created by user_id."""
+        return (self.db.query(Application)
+                .filter_by(tenant_id=tenant_id)
+                .filter(Application.created_by_user_id == user_id)
+                .order_by(Application.created_at.desc())
+                .all())
+
+    def get_apps_by_instance_db_id(self, instance_db_id: str) -> List[Application]:
+        """
+        Return all Application rows linked to a given ec2_instances.id
+        via the application_instances join table.
+        Used to cascade status changes when an EC2 instance is
+        stopped, started, or terminated.
+        """
+        from .models import ApplicationInstance
+        mappings = (self.db.query(ApplicationInstance)
+                    .filter_by(instance_id=instance_db_id)
+                    .all())
+        app_ids = [m.application_id for m in mappings]
+        if not app_ids:
+            return []
+        return self.db.query(Application).filter(Application.id.in_(app_ids)).all()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -172,6 +229,21 @@ class EC2InstanceRepository:
         self.db.flush()
         return mapping
 
+    def remove_application_link(self, instance_db_id: str):
+        """
+        Mark all application_instances rows for this instance as 'terminated'.
+        Called when an EC2 instance is terminated (on failure or cancellation)
+        so the join table stays consistent with the real AWS state.
+        """
+        self.db.query(ApplicationInstance).filter_by(
+            instance_id=instance_db_id
+        ).update({
+            'status': 'terminated',
+            'removed_at': datetime.utcnow(),
+        })
+        logger.debug('ApplicationInstance rows for instance %s marked terminated',
+                     instance_db_id)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DeploymentRepository
@@ -205,7 +277,19 @@ class DeploymentRepository:
         return self.db.query(Deployment).filter_by(short_id=short_id).first()
 
     def list_all(self, limit: int = 50) -> List[Deployment]:
+        """Kept for backward-compat. Prefer list_all_admin or list_by_user."""
+        return self.list_all_admin(limit=limit)
+
+    def list_all_admin(self, limit: int = 50) -> List[Deployment]:
+        """Admin view — returns all deployments across all users."""
         return (self.db.query(Deployment)
+                .order_by(Deployment.started_at.desc())
+                .limit(limit).all())
+
+    def list_by_user(self, user_id: str, limit: int = 50) -> List[Deployment]:
+        """Non-admin view — returns only deployments triggered by user_id."""
+        return (self.db.query(Deployment)
+                .filter(Deployment.triggered_by_user_id == user_id)
                 .order_by(Deployment.started_at.desc())
                 .limit(limit).all())
 

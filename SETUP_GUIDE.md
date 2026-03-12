@@ -1,8 +1,13 @@
 # 🚀 Complete Setup Guide — ML Deployment Platform
 
-This guide walks you through setting up the framework **from absolute scratch**.
-The **recommended (and easiest) path is Docker Compose** — it starts everything
-(PostgreSQL, Flask backend, React frontend) with a single command.
+This guide walks you through setting up the platform **from absolute scratch**.
+
+Two setup paths are documented:
+
+| Path | Best For |
+|---|---|
+| **[Docker Compose](#6-run-with-docker-compose-recommended)** | Fastest way to get running — one command starts everything |
+| **[Manual Docker](#7-manual-docker-setup-learning-path)** | Learn exactly how the containers communicate — recommended if you want to understand the infrastructure |
 
 ---
 
@@ -10,27 +15,34 @@ The **recommended (and easiest) path is Docker Compose** — it starts everythin
 
 1. [Prerequisites](#1-prerequisites)
 2. [Clone the Repository](#2-clone-the-repository)
-3. [AWS Credentials — Detailed Setup](#3-aws-credentials--detailed-setup)
-4. [EC2 Key Pair — Detailed Setup](#4-ec2-key-pair--detailed-setup)
-5. [Configure Environment Variables](#5-configure-environment-variables)
+3. [AWS Credentials Setup](#3-aws-credentials-setup)
+4. [Store PEM Key in AWS Secrets Manager](#4-store-pem-key-in-aws-secrets-manager)
+5. [EC2 Key Pair Setup](#5-ec2-key-pair-setup)
 6. [Run with Docker Compose (Recommended)](#6-run-with-docker-compose-recommended)
-7. [Run Locally Without Docker (Alternative)](#7-run-locally-without-docker-alternative)
-8. [Using the Application](#8-using-the-application)
-9. [Troubleshooting](#9-troubleshooting)
+7. [Manual Docker Setup (Learning Path)](#7-manual-docker-setup-learning-path)
+8. [Run Locally Without Docker (Dev)](#8-run-locally-without-docker-dev)
+9. [Using the Application](#9-using-the-application)
+10. [Troubleshooting](#10-troubleshooting)
 
 ---
 
 ## 1. Prerequisites
 
-Install all of the following before you begin.
+### Required for all paths
 
 | Tool | Minimum Version | Download |
-|------|----------------|----------|
-| **Docker Desktop** | 24+ | <https://www.docker.com/products/docker-desktop/> |
-| **Git** | Any | <https://git-scm.com/downloads> |
-| **AWS Account** | — | <https://aws.amazon.com/free/> |
+|---|---|---|
+| **Docker Desktop** | 24+ | https://www.docker.com/products/docker-desktop/ |
+| **Git** | Any | https://git-scm.com/downloads |
+| **AWS Account** | — | https://aws.amazon.com/free/ |
+| **AWS CLI** | 2.x | https://aws.amazon.com/cli/ |
 
-> **Note — Local dev only (no Docker):** You also need Python 3.11+ and Node.js 20+.
+### Required for local dev only (no Docker)
+
+| Tool | Minimum Version |
+|---|---|
+| Python | 3.11+ |
+| Node.js | 20+ |
 
 ### Verify Installations
 
@@ -38,6 +50,7 @@ Install all of the following before you begin.
 docker --version          # Docker version 24.x or later
 docker compose version    # Docker Compose v2.x or later
 git --version
+aws --version
 ```
 
 ---
@@ -51,89 +64,181 @@ cd ML-Deployment-Platform
 
 ---
 
-## 3. AWS Credentials — Detailed Setup
+## 3. AWS Credentials Setup
 
-The framework uses **boto3 (AWS SDK)** to provision EC2 instances on your behalf.
-You must supply credentials for an IAM user that has the right permissions.
+The platform uses **boto3** to provision EC2 instances. boto3 resolves credentials automatically — you **never put `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` in `.env` or any env file**.
 
-### Step 3.1 — Create (or use an existing) IAM User
+### Step 3.1 — Create an IAM User
 
-1. Open the **[AWS Console](https://console.aws.amazon.com/)** → Search for **IAM** → Open it.
-2. Click **Users** in the left sidebar → **Create user**.
-3. Give the user a name, e.g. `ml-deploy-bot`.
-4. On the **Permissions** page chose **Attach policies directly**.
-5. Attach the following managed policy (broad but sufficient for this tool):
+1. Open **[AWS Console](https://console.aws.amazon.com/)** → **IAM** → **Users** → **Create user**
+2. Name it, e.g. `ml-deploy-bot`
+3. On the Permissions page, choose **Attach policies directly** and attach:
    - `AmazonEC2FullAccess`
-   - *(Optional)* `AmazonVPCFullAccess` — only if your account has a custom VPC.
-6. Finish the wizard and click **Create user**.
+   - *(Optional)* `AmazonVPCFullAccess` — only if your account uses a custom VPC
+   - A custom policy granting `secretsmanager:GetSecretValue` on your PEM secret (see Step 4)
+4. Finish and click **Create user**
+
+**For least-privilege EC2 permissions**, use this custom policy instead of `AmazonEC2FullAccess`:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:RunInstances",
+        "ec2:DescribeInstances",
+        "ec2:TerminateInstances",
+        "ec2:StartInstances",
+        "ec2:StopInstances",
+        "ec2:CreateSecurityGroup",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:DescribeSecurityGroups",
+        "ec2:CreateTags",
+        "ec2:DescribeKeyPairs",
+        "ec2:DescribeImages",
+        "ec2:DescribeInstanceStatus"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
 
 ### Step 3.2 — Generate an Access Key
 
-1. Click the newly created user → **Security credentials** tab.
-2. Scroll to **Access keys** → **Create access key**.
-3. Choose **"Application running outside AWS"** as the use case.
-4. Copy **both** values:
+1. Click your new user → **Security credentials** tab
+2. Scroll to **Access keys** → **Create access key**
+3. Choose **"Application running outside AWS"**
+4. Copy both values — the **Secret Access Key is shown only once**
 
-   | Variable | What it looks like |
-   |---|---|
-   | **Access Key ID** | `AKIA...` (20-character string starting with `AKIA`) |
-   | **Secret Access Key** | `wJalrXU...` (40-character base-64 string) |
+### Step 3.3 — Configure the AWS CLI
 
-   > ⚠️ **Important:** The Secret Access Key is shown **only once**.
-   > Copy it now or download the CSV. If you lose it, you must create a new key.
+```bash
+aws configure
+```
 
-5. Paste these into your `.env` file (see [Section 5](#5-configure-environment-variables)).
+Enter the values when prompted:
 
-### Step 3.3 — Choose Your AWS Region
+```
+AWS Access Key ID:     AKIAXXXXXXXXXXXXXXXX
+AWS Secret Access Key: wJalrXU...
+Default region name:   ap-south-1
+Default output format: json
+```
 
-This determines where EC2 instances are created.
-Common options:
+Credentials are stored in `~/.aws/credentials`. boto3 in the backend container picks these up automatically when you mount `~/.aws` as a volume (see the manual Docker setup).
+
+### Step 3.4 — Verify
+
+```bash
+aws sts get-caller-identity
+# Returns your account ID and user ARN — confirms credentials work
+```
+
+### Step 3.5 — Choose Your AWS Region
 
 | Region Code | Location |
 |---|---|
-| `us-east-1` | N. Virginia (default, cheapest) |
+| `us-east-1` | N. Virginia (cheapest) |
 | `us-west-2` | Oregon |
 | `eu-west-1` | Ireland |
 | `ap-south-1` | Mumbai |
 
-Use the same region for **everything** (credentials, key pair, AMI).
+Use the **same region** for your credentials, key pair, AMI ID, and Secrets Manager secret.
 
 ---
 
-## 4. EC2 Key Pair — Detailed Setup
+## 4. Store PEM Key in AWS Secrets Manager
 
-The framework SSH-connects to EC2 instances using a `.pem` private key file.
+The EC2 SSH private key is stored in AWS Secrets Manager and fetched automatically at backend startup. It is **never** in the Docker image, repository, or any committed file.
 
-### Step 4.1 — Create a Key Pair in AWS
+### Step 4.1 — Upload the Secret
 
-1. AWS Console → **EC2** → **Key Pairs** (left sidebar, under **Network & Security**).
-2. Click **Create key pair**.
-3. Fill in:
-   - **Name:** e.g. `ml-deploy-key` ← you'll use this name in `.env`
-   - **Key pair type:** RSA
-   - **Private key file format:** `.pem`
-4. Click **Create key pair** — the browser will automatically **download** `ml-deploy-key.pem`.
+1. Open **[AWS Secrets Manager Console](https://console.aws.amazon.com/secretsmanager)**
+2. Click **Store a new secret**
+3. Choose **Other type of secret** → **Plaintext**
+4. Paste the **full contents** of your `.pem` file, including headers:
+   ```
+   -----BEGIN RSA PRIVATE KEY-----
+   MIIEowIBAAK...
+   -----END RSA PRIVATE KEY-----
+   ```
+5. Name the secret, e.g. `ml-deploy-key`
+6. Click through and save
 
-### Step 4.2 — Place the `.pem` File in the Project
+Note the exact secret name — you will use it as `PEM_SECRET_NAME`.
 
-```bash
-# Move the downloaded file into the backend/ directory
-mv ~/Downloads/ml-deploy-key.pem  backend/ml-deploy-key.pem
+### Step 4.2 — Grant IAM Permission
 
-# On Linux/macOS — restrict permissions (REQUIRED for SSH to work)
-chmod 400 backend/ml-deploy-key.pem
+Add this statement to the IAM policy for your `ml-deploy-bot` user:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": "secretsmanager:GetSecretValue",
+  "Resource": "arn:aws:secretsmanager:<REGION>:<ACCOUNT_ID>:secret:ml-deploy-key*"
+}
 ```
 
-> **Windows users:** Docker mounts the file as read-only, so permissions are
-> handled automatically. No `chmod` needed.
+Replace `<REGION>` and `<ACCOUNT_ID>` with your values.
 
-### Step 4.3 — Find the Right AMI ID for Your Region
+### How It Works at Runtime
 
-The AMI (Amazon Machine Image) is the OS template for new EC2 instances.
-The framework defaults to **Ubuntu 22.04 LTS**.
+When the backend container starts, `load_pem_from_secrets_manager()` in `backend/core/utils.py`:
+
+1. Calls `boto3 → secretsmanager.get_secret_value(SecretId=PEM_SECRET_NAME)`
+2. Writes the key content to `PEM_KEY_PATH` (default: `/app/ml-deploy-key.pem`) with `chmod 600`
+3. Paramiko uses this file for all SSH connections to deployed EC2 instances
+
+If `PEM_SECRET_NAME` is not set, the fetch is skipped and a warning is logged. SSH deployments will fail unless the file exists at `PEM_KEY_PATH` via another means (e.g. a Docker volume mount).
+
+---
+
+## 5. EC2 Key Pair Setup
+
+### Step 5.1 — Create a Key Pair in AWS
+
+1. AWS Console → **EC2** → **Key Pairs** (under Network & Security)
+2. Click **Create key pair**
+3. Fill in:
+   - **Name:** e.g. `ml-deploy-key` ← this is `AWS_KEY_PAIR_NAME` in your env
+   - **Key pair type:** RSA
+   - **Private key file format:** `.pem`
+4. Click **Create key pair** — the browser downloads `ml-deploy-key.pem`
+
+### Step 5.2 — Upload to Secrets Manager
+
+Follow Step 4 above using this downloaded `.pem` file.
+
+### Step 5.3 — Place in Project (for Docker volume mount / Docker Compose)
+
+```bash
+# macOS / Linux
+mv ~/Downloads/ml-deploy-key.pem backend/ml-deploy-key.pem
+chmod 400 backend/ml-deploy-key.pem
+
+# Windows
+move %USERPROFILE%\Downloads\ml-deploy-key.pem backend\ml-deploy-key.pem
+```
+
+> **Windows Docker users:** permissions are handled by Docker's read-only mount. No `chmod` needed.
+
+`docker-compose.yml` mounts this automatically:
+```yaml
+volumes:
+  - ./backend/ml-deploy-key.pem:/app/ml-deploy-key.pem:ro
+```
+
+For the manual setup you can either rely on Secrets Manager (recommended) or add a volume mount to the `docker run` command.
+
+### Step 5.4 — Find the Right AMI ID for Your Region
+
+The platform provisions **Ubuntu 22.04 LTS** instances by default.
 
 Look up the correct AMI ID for your region at:
-<https://cloud-images.ubuntu.com/locator/ec2/>
+https://cloud-images.ubuntu.com/locator/ec2/
 
 Common Ubuntu 22.04 LTS AMI IDs:
 
@@ -144,200 +249,448 @@ Common Ubuntu 22.04 LTS AMI IDs:
 | `eu-west-1` | `ami-0965bd5ba4d59211c` |
 | `ap-south-1` | `ami-007020fd9ab68be57` |
 
-> ⚠️ AMI IDs change with new Ubuntu releases. Always verify the latest at the link above.
-
----
-
-## 5. Configure Environment Variables
-
-```bash
-# Copy the template
-copy .env.example .env        # Windows
-cp .env.example .env          # macOS / Linux
-```
-
-Now open `.env` in any text editor and fill in the values below.
-**Mandatory fields are marked with ⚠️.**
-
-```env
-# ============================================================
-# ⚠️ AWS CREDENTIALS — required to provision EC2 instances
-# ============================================================
-AWS_ACCESS_KEY_ID=AKIAXXXXXXXXXXXXXXXX        # ← from Step 3.2
-AWS_SECRET_ACCESS_KEY=wJalrXUxxxxxxxxxxxxxxxxx  # ← from Step 3.2
-
-# ⚠️ Region where instances will be created (must match your key pair region)
-AWS_REGION=us-east-1
-
-# ⚠️ Name of your EC2 key pair (just the name, NOT the .pem file path)
-AWS_KEY_PAIR_NAME=ml-deploy-key              # ← from Step 4.1
-
-# ============================================================
-# EC2 INSTANCE SETTINGS
-# ============================================================
-# ⚠️ AMI ID for Ubuntu 22.04 LTS — must match AWS_REGION (see Step 4.3)
-EC2_AMI_ID=ami-0c7217cdde317cfec
-
-# Instance type (t3.micro = Free Tier eligible)
-EC2_INSTANCE_TYPE=t3.micro
-
-# Root disk size in GB (minimum 8, recommended 20)
-EC2_VOLUME_SIZE=20
-
-# ============================================================
-# SECURITY GROUP
-# ============================================================
-SECURITY_GROUP_NAME=ml-deployment-sg
-
-# SSH access — replace with your public IP for better security
-# Find your IP: curl ifconfig.me
-ALLOWED_SSH_IP=0.0.0.0/0
-
-# ============================================================
-# APPLICATION SERVER
-# ============================================================
-APP_PORT=5000
-FLASK_ENV=development
-
-# Generate a random secret: python -c "import secrets; print(secrets.token_hex(32))"
-SECRET_KEY=change-this-to-a-random-string
-
-# ============================================================
-# DOCKER PORT MAPPING (for apps you deploy TO EC2)
-# ============================================================
-# Port your deployed Docker app listens on INSIDE the container
-DOCKER_CONTAINER_PORT=8000
-
-# Port exposed on the EC2 host that NGINX proxies to
-DOCKER_HOST_PORT=8000
-
-# ============================================================
-# DEPLOYMENT BEHAVIOUR
-# ============================================================
-MAX_DEPLOYMENT_TIME=600
-HEALTH_CHECK_INTERVAL=10
-HEALTH_CHECK_RETRIES=5
-
-# ============================================================
-# GITHUB (optional — only needed for PRIVATE repositories)
-# ============================================================
-# Generate at https://github.com/settings/tokens (scope: repo)
-GITHUB_TOKEN=
-
-# ============================================================
-# NGINX (applies to apps deployed ON EC2, not this framework)
-# ============================================================
-ENABLE_NGINX=true
-NGINX_HTTP_PORT=80
-NGINX_HTTPS_PORT=443
-ENABLE_SSL=false
-SSL_EMAIL=
-
-# ============================================================
-# LOGGING
-# ============================================================
-# DEBUG = verbose, INFO = standard, WARNING/ERROR = quiet
-LOG_LEVEL=INFO
-LOG_FILE=deployment.log
-```
+> ⚠️ AMI IDs change with new Ubuntu releases. Always verify at the link above.
 
 ---
 
 ## 6. Run with Docker Compose (Recommended)
 
-This starts three containers:
-- **`autodeploy_postgres`** — PostgreSQL 16 (persistent data volume)
-- **`autodeploy_backend`** — Flask + Gunicorn + SocketIO (port 5000)
-- **`autodeploy_frontend`** — React/Vite built app served by Nginx (port 80)
+Starts three containers in one command: **PostgreSQL 16**, **Flask + Gunicorn backend**, and **React/Nginx frontend**.
 
-### Step 6.1 — Make Sure Docker Desktop is Running
+### Step 6.1 — Configure Environment Variables
+
+```bash
+# macOS / Linux
+cp .env.example .env
+
+# Windows
+copy .env.example .env
+```
+
+Open `.env` and fill in the mandatory values:
+
+```env
+# ── AWS (no static keys — use aws configure instead) ─────────────────────────
+AWS_REGION=us-east-1
+AWS_KEY_PAIR_NAME=ml-deploy-key
+
+# ── EC2 ───────────────────────────────────────────────────────────────────────
+EC2_AMI_ID=ami-0c7217cdde317cfec    # Ubuntu 22.04 LTS — update for your region
+EC2_INSTANCE_TYPE=t3.micro
+EC2_VOLUME_SIZE=20
+
+# ── Security Group ────────────────────────────────────────────────────────────
+SECURITY_GROUP_NAME=ml-deployment-sg
+ALLOWED_SSH_IP=0.0.0.0/0            # Replace with your IP/32 for production
+
+# ── Flask ─────────────────────────────────────────────────────────────────────
+APP_PORT=5000
+FLASK_ENV=development
+
+# Generate: python -c "import secrets; print(secrets.token_hex(32))"
+SECRET_KEY=your_secret_key_here
+JWT_SECRET_KEY=your_jwt_secret_key_here
+JWT_EXPIRY_HOURS=1
+
+# ── First-Admin Bootstrap ─────────────────────────────────────────────────────
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD=ChangeMe123!
+
+# ── PEM Key ───────────────────────────────────────────────────────────────────
+PEM_SECRET_NAME=ml-deploy-key       # Your Secrets Manager secret name (Step 4)
+PEM_KEY_PATH=/app/ml-deploy-key.pem
+
+# ── Database ──────────────────────────────────────────────────────────────────
+POSTGRES_USER=dbadmin
+POSTGRES_PASSWORD=your_db_password_here
+POSTGRES_DB=autodeploy
+DB_USER=dbadmin
+DB_PASSWORD=your_db_password_here
+DB_NAME=autodeploy
+
+# ── CORS / Frontend ───────────────────────────────────────────────────────────
+FRONTEND_URL=http://localhost
+CORS_ORIGINS=http://localhost,http://localhost:80
+
+# ── Docker deployment ports (for apps deployed TO EC2) ────────────────────────
+DOCKER_CONTAINER_PORT=8000
+DOCKER_HOST_PORT=8000
+MAX_DEPLOYMENT_TIME=600
+HEALTH_CHECK_INTERVAL=10
+HEALTH_CHECK_RETRIES=5
+
+# ── Nginx ─────────────────────────────────────────────────────────────────────
+NGINX_HTTP_PORT=80
+ENABLE_NGINX=true
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+LOG_LEVEL=INFO
+LOG_FILE=deployment.log
+```
+
+### Step 6.2 — Make Sure Docker Desktop is Running
 
 Open Docker Desktop and wait until it shows **"Engine running"**.
 
-### Step 6.2 — Start Everything
+### Step 6.3 — Start Everything
 
 ```bash
-# From the project root directory (ML-Deployment-Platform/)
 docker compose up --build
 ```
 
-First build takes **3–5 minutes** (downloads base images, installs packages).
-Subsequent starts take seconds.
+First build: **3–5 minutes**. Subsequent starts: seconds.
 
-**Expected output tail:**
+**Expected output:**
+
 ```
-autodeploy_postgres   | LOG:  database system is ready to accept connections
+autodeploy_postgres   | database system is ready to accept connections
 autodeploy_backend    | [INFO] Starting gunicorn 21.2.0
 autodeploy_backend    | [INFO] Listening at: http://0.0.0.0:5000
-autodeploy_frontend   | /docker-entrypoint.sh: Configuration complete; ready for start up
+autodeploy_frontend   | Configuration complete; ready for start up
 ```
 
-### Step 6.3 — Database Migrations
+### Step 6.4 — Alembic Migrations
 
-Alembic migrations run **automatically** when the backend container starts.
-You do not need to run them manually.
+Migrations run **automatically** at backend container startup. No manual step needed.
 
-### Step 6.4 — Open the Application
+### Step 6.5 — Open the Application
 
-| Service | URL | Description |
-|---|---|---|
-| **Frontend UI** | <http://localhost> | Main dashboard (port 80) |
-| **Backend API** | <http://localhost:5000> | Flask REST API |
-| **PostgreSQL** | `localhost:5432` | DB (user: `dbadmin`, pass: `AutoDeploy123`, db: `autodeploy`) |
+| Service | URL |
+|---|---|
+| **Frontend UI** | http://localhost |
+| **Backend API** | http://localhost:5000 |
+| **PostgreSQL** | localhost:5432 (user: dbadmin) |
 
-### Useful Docker Commands
+Log in with the `ADMIN_EMAIL` and `ADMIN_PASSWORD` you set in `.env`.
+
+### Useful Docker Compose Commands
 
 ```bash
-# Run in background (detached)
+# Run in background
 docker compose up --build -d
 
-# View live logs
+# View live logs (all services)
 docker compose logs -f
 
 # View logs for one service
 docker compose logs -f backend
 
-# Stop all services
+# Stop all services (data preserved)
 docker compose down
 
-# Stop and delete database volume (full reset)
+# Stop and delete the database volume (full reset)
 docker compose down -v
 
-# Rebuild only the backend after code changes
+# Rebuild only the backend
 docker compose up --build backend
 ```
 
 ---
 
-## 7. Run Locally Without Docker (Alternative)
+## 7. Manual Docker Setup (Learning Path)
 
-Use this when you want faster hot-reload during development.
+> **Why do this?**
+> Docker Compose abstracts away the individual steps. Doing it manually teaches you:
+> - How Docker bridge networks work and why you use service names (`ml-postgres`) instead of `localhost`
+> - How `--env-file` injects environment variables into a container
+> - How volume mounts work for secrets, credentials, and persistent data
+> - How to inspect, debug, and restart individual containers independently
+> - The exact startup sequence the backend requires (database must be ready first)
+>
+> This knowledge makes it far easier to debug issues and adapt the platform to different environments.
 
-### 7.1 — Backend
+---
+
+### M1 — AWS Credentials (Already Done in Step 3)
+
+The backend container must be able to call AWS APIs. The AWS CLI configuration from Step 3 (`aws configure`) stores credentials in `~/.aws/credentials` on your host machine. You mount this directory into the container in Step M7.
+
+---
+
+### M2 — Create Docker Network
+
+```bash
+docker network create ml-network
+```
+
+Verify:
+
+```bash
+docker network ls
+# NAME         DRIVER    SCOPE
+# ml-network   bridge    local
+```
+
+All three containers join this network. They can then reach each other by container name — `ml-postgres`, `ml-backend`, `ml-frontend` — instead of `localhost`.
+
+---
+
+### M3 — Run PostgreSQL
+
+```bash
+docker run -d \
+  --name ml-postgres \
+  --network ml-network \
+  --restart unless-stopped \
+  -e POSTGRES_USER=dbadmin \
+  -e POSTGRES_PASSWORD=your_db_password_here \
+  -e POSTGRES_DB=autodeploy \
+  -p 5432:5432 \
+  -v ml-postgres-data:/var/lib/postgresql/data \
+  postgres:16-alpine
+```
+
+Wait ~10 seconds then verify:
+
+```bash
+docker exec -it ml-postgres pg_isready -U dbadmin -d autodeploy
+# /var/run/postgresql:5432 - accepting connections
+```
+
+---
+
+### M4 — Create `backend.env`
+
+Create `backend.env` in any directory on your machine. **Do not commit this file.**
+
+```env
+# ── Database ──────────────────────────────────────────────────────────────────
+# Use the postgres CONTAINER NAME as hostname, not localhost
+DATABASE_URL=postgresql://dbadmin:your_db_password_here@ml-postgres:5432/autodeploy
+
+# ── Flask ─────────────────────────────────────────────────────────────────────
+FLASK_ENV=development
+APP_PORT=5000
+
+# Generate: python -c "import secrets; print(secrets.token_hex(32))"
+SECRET_KEY=your_secret_key_here
+JWT_SECRET_KEY=your_jwt_secret_key_here
+JWT_EXPIRY_HOURS=1
+
+# ── First-Admin Bootstrap ─────────────────────────────────────────────────────
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD=ChangeMe123!
+
+# ── AWS (credentials come from ~/.aws volume mount — no keys here) ────────────
+AWS_REGION=ap-south-1
+AWS_KEY_PAIR_NAME=ml-deploy-key
+EC2_AMI_ID=ami-019715e0d74f695be
+EC2_INSTANCE_TYPE=t3.micro
+EC2_VOLUME_SIZE=20
+SECURITY_GROUP_NAME=ml-deployment-sg
+ALLOWED_SSH_IP=0.0.0.0/0
+
+# ── PEM Key (Secrets Manager) ─────────────────────────────────────────────────
+PEM_SECRET_NAME=ml-deploy-key
+PEM_KEY_PATH=/app/ml-deploy-key.pem
+
+# ── CORS / Frontend ───────────────────────────────────────────────────────────
+FRONTEND_URL=http://localhost
+CORS_ORIGINS=http://localhost,http://localhost:80
+
+# ── Nginx backend routing (used by frontend Nginx config template) ────────────
+BACKEND_HOST=ml-backend
+BACKEND_PORT=5000
+
+# ── Docker deployment ports (for apps deployed TO EC2) ────────────────────────
+DOCKER_CONTAINER_PORT=8000
+DOCKER_HOST_PORT=8000
+MAX_DEPLOYMENT_TIME=600
+HEALTH_CHECK_INTERVAL=10
+HEALTH_CHECK_RETRIES=5
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+LOG_LEVEL=INFO
+LOG_FILE=deployment.log
+
+# ── NGINX on EC2 ──────────────────────────────────────────────────────────────
+ENABLE_NGINX=true
+NGINX_HTTP_PORT=80
+```
+
+---
+
+### M5 — Build the Backend Image
+
+```bash
+# Run from the project root (ML-Deployment-Platform/)
+docker build -f Dockerfile.backend -t ml-backend .
+```
+
+---
+
+### M6 — Run the Backend Container
+
+`--env-file` keeps the run command short and keeps secrets out of your shell history.
+
+The `-v ~/.aws` mount gives boto3 inside the container access to your `aws configure` credentials. The container runs as `appuser`, so the mount destination is `/home/appuser/.aws`.
+
+**macOS / Linux:**
+
+```bash
+docker run -d \
+  --name ml-backend \
+  --network ml-network \
+  --restart unless-stopped \
+  -p 5000:5000 \
+  --env-file /path/to/backend.env \
+  -v ~/.aws:/home/appuser/.aws:ro \
+  ml-backend
+```
+
+**Windows (PowerShell):**
+
+```powershell
+docker run -d `
+  --name ml-backend `
+  --network ml-network `
+  --restart unless-stopped `
+  -p 5000:5000 `
+  --env-file C:\path\to\backend.env `
+  -v C:\Users\<YourUsername>\.aws:/home/appuser/.aws:ro `
+  ml-backend
+```
+
+> **What the `-v ~/.aws` mount does:**
+> boto3 uses the standard AWS credentials lookup chain. Mounting `~/.aws` into the container's `appuser` home directory means boto3 finds your `aws configure` credentials without any static keys in `backend.env`.
+>
+> **PEM key:** If `PEM_SECRET_NAME` is set, the key is fetched from Secrets Manager at startup and written to `/app/ml-deploy-key.pem` automatically.
+>
+> **Alternative — mount the .pem directly** (if you prefer not to use Secrets Manager):
+> Remove `PEM_SECRET_NAME` from `backend.env` and add:
+> ```
+> -v /absolute/path/to/ml-deploy-key.pem:/app/ml-deploy-key.pem:ro
+> ```
+
+Verify startup:
+
+```bash
+docker logs ml-backend
+# Expected lines:
+# [PEM] PEM key written to /app/ml-deploy-key.pem
+# [INFO] Default tenant created
+# [INFO] Admin user created: admin@example.com    ← first run only
+# [INFO] Listening at: http://0.0.0.0:5000
+
+curl http://localhost:5000/api/health
+# {"status": "healthy", ...}
+```
+
+---
+
+### M7 — Build the Frontend Image
+
+```bash
+docker build -f Dockerfile.frontend -t ml-frontend .
+```
+
+---
+
+### M8 — Run the Frontend Container
+
+The frontend Nginx config template uses `BACKEND_HOST` and `BACKEND_PORT` (injected via `envsubst` at startup) to proxy `/api/*` and `/socket.io/*` to the backend container.
+
+```bash
+docker run -d \
+  --name ml-frontend \
+  --network ml-network \
+  --restart unless-stopped \
+  -p 80:80 \
+  -e BACKEND_HOST=ml-backend \
+  -e BACKEND_PORT=5000 \
+  ml-frontend
+```
+
+---
+
+### M9 — Verify Everything
+
+```bash
+docker ps
+```
+
+Expected:
+
+```
+CONTAINER ID  IMAGE         STATUS           NAMES
+xxxxxxxxxxxx  ml-frontend   Up X minutes     ml-frontend
+xxxxxxxxxxxx  ml-backend    Up X minutes     ml-backend
+xxxxxxxxxxxx  postgres:16   Up X minutes     ml-postgres
+```
+
+Open:
+
+```
+http://localhost
+```
+
+Log in with the `ADMIN_EMAIL` and `ADMIN_PASSWORD` from `backend.env`.
+
+---
+
+### Manual Management Commands
+
+```bash
+# Follow logs
+docker logs -f ml-backend
+docker logs -f ml-frontend
+docker logs -f ml-postgres
+
+# Restart a container
+docker restart ml-backend
+
+# Open a shell inside a container
+docker exec -it ml-backend bash
+docker exec -it ml-postgres psql -U dbadmin -d autodeploy
+
+# Stop all containers
+docker stop ml-frontend ml-backend ml-postgres
+
+# Remove containers (volume survives)
+docker rm ml-frontend ml-backend ml-postgres
+
+# Remove network
+docker network rm ml-network
+
+# Full reset — remove containers, network, and data volume
+docker stop ml-frontend ml-backend ml-postgres
+docker rm ml-frontend ml-backend ml-postgres
+docker volume rm ml-postgres-data
+docker network rm ml-network
+```
+
+---
+
+## 8. Run Locally Without Docker (Dev)
+
+Use this for the fastest hot-reload cycle during development. You still need a running PostgreSQL instance.
+
+### Backend
 
 ```bash
 # From project root
 python -m venv venv
 
 # Activate
-venv\Scripts\activate        # Windows
-source venv/bin/activate     # macOS / Linux
+source venv/bin/activate      # macOS / Linux
+venv\Scripts\activate         # Windows
 
-# Install Python packages
 pip install -r requirements.txt
 
-# Start the backend
+# Start
 python -m backend.app
 ```
 
-Backend runs at **`http://localhost:5000`**.
+Ensure your `.env` has:
 
-> You still need a PostgreSQL instance running and a `DATABASE_URL` in your `.env`:
-> ```env
-> DATABASE_URL=postgresql://dbadmin:AutoDeploy123@localhost:5432/autodeploy
-> ```
+```env
+DATABASE_URL=postgresql://dbadmin:your_password@localhost:5432/autodeploy
+FLASK_ENV=development
+```
 
-### 7.2 — Frontend
+Backend runs at **http://localhost:5000**.
+
+### Frontend
 
 ```bash
 cd frontend
@@ -345,60 +698,79 @@ npm install
 npm run dev
 ```
 
-Frontend dev server runs at **`http://localhost:5173`**.
+Create `frontend/.env`:
+
+```env
+VITE_API_URL=http://localhost:5000
+```
+
+Frontend dev server runs at **http://localhost:5173** with hot-reload.
 
 ---
 
-## 8. Using the Application
+## 9. Using the Application
 
-Once the app is running at `http://localhost`:
+Once running at `http://localhost`:
+
+### First Login
+
+Use `ADMIN_EMAIL` and `ADMIN_PASSWORD` from your `.env` or `backend.env`. The account is created automatically on first startup. If the admin already exists, the env vars are ignored on subsequent startups.
 
 ### First Deployment
 
-1. Click **Deploy** in the sidebar.
-2. Enter a **GitHub repository URL** (e.g. `https://github.com/you/your-ml-app`).
-3. The repository must contain a `Dockerfile` that builds an image listening
-   on `0.0.0.0:8000`.
-4. Click **Deploy Application**.
-5. Watch real-time logs stream in via WebSocket.
-6. When complete, you'll get the **EC2 public IP** to access your deployed app.
+1. Click **Deploy** in the sidebar
+2. Enter a GitHub repository URL (e.g. `https://github.com/you/your-ml-app`)
+3. The repository must contain a `Dockerfile` that builds an image listening on `0.0.0.0:8000`
+4. Click **Deploy Application**
+5. Watch real-time logs stream via WebSocket
+6. On completion you receive the EC2 public IP to access your deployed app
 
 ### Example Repository
 
-The `example_ml_app/` folder in this repo contains a sample Flask ML app
-with a ready-to-use `Dockerfile`. Push it to your GitHub account and deploy it
-to test the full pipeline.
+`example_ml_app/` contains a ready-to-use Flask ML app with a `Dockerfile`. Push it to your GitHub account and deploy it to test the full pipeline.
 
 ---
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 ### Docker Issues
 
 | Problem | Solution |
 |---|---|
-| `docker compose` command not found | Use `docker-compose` (v1 CLI) or update Docker Desktop |
-| `port 80 already in use` | Stop any local web server (nginx, xampp) or change frontend port in `docker-compose.yml` |
-| `port 5000 already in use` | On macOS, AirPlay uses 5000. Disable AirPlay Receiver in System Settings → Sharing |
-| `port 5432 already in use` | Stop a local PostgreSQL service |
-| Backend exits immediately | Check `docker compose logs backend` — likely a missing `.env` value |
+| `docker compose` not found | Use `docker-compose` (v1) or update Docker Desktop |
+| Port 80 in use | Stop the conflicting service or change `NGINX_HTTP_PORT` |
+| Port 5000 in use (macOS) | AirPlay uses 5000 — disable AirPlay Receiver in System Settings → Sharing |
+| Port 5432 in use | Stop a local PostgreSQL instance |
+| Backend exits immediately | Run `docker logs ml-backend` — likely a missing env value |
+| `could not translate host name "postgres"` | `DATABASE_URL` uses wrong hostname — must be container name (`ml-postgres` or `postgres`) not `localhost` |
 
 ### AWS / Deployment Issues
 
 | Problem | Solution |
 |---|---|
-| `AWS_ACCESS_KEY_ID is required` | `.env` file is missing or not loaded — verify it is in the project root |
-| `InvalidClientTokenId` | Access Key ID is wrong or the IAM user was deleted |
-| `AuthFailure` (SSH) | `.pem` file is missing from `backend/` or its name doesn't match `AWS_KEY_PAIR_NAME` |
-| `AMI not found` | `EC2_AMI_ID` in `.env` does not exist in your `AWS_REGION` — update it per Step 4.3 |
-| Instance stuck provisioning | Increase `MAX_DEPLOYMENT_TIME` in `.env` |
+| `AWS_KEY_PAIR_NAME is required` | Add it to `.env` or `backend.env` |
+| `EC2_AMI_ID is required` | Add an AMI ID for your region (Step 5.4) |
+| `InvalidClientTokenId` | Run `aws configure` again with correct credentials |
+| `AuthFailure` (SSH) | Key pair name in env doesn't match the name in AWS, or PEM content is wrong |
+| `AMI not found` | `EC2_AMI_ID` doesn't exist in your `AWS_REGION` — update it |
+| PEM fetch error | Check `PEM_SECRET_NAME` matches the exact Secrets Manager secret name; verify IAM permission and region |
+| Instance stuck provisioning | Increase `MAX_DEPLOYMENT_TIME` in env |
+
+### Auth Issues
+
+| Problem | Solution |
+|---|---|
+| Login fails on first run | Check `ADMIN_EMAIL`/`ADMIN_PASSWORD` were set in env **before** first startup |
+| Admin already exists message | Bootstrap is idempotent — this is expected behaviour on subsequent starts |
+| JWT expired | Increase `JWT_EXPIRY_HOURS` or re-login |
 
 ### Frontend / API Issues
 
 | Problem | Solution |
 |---|---|
-| Dashboard shows no data | Check backend is healthy: `curl http://localhost:5000/api/health` |
-| WebSocket not connecting | Ensure backend is running; check browser console for errors |
+| Dashboard shows no data | Check backend health: `curl http://localhost:5000/api/health` |
+| WebSocket not connecting | Ensure backend is up; check browser console for CORS errors |
+| CORS errors in browser | Verify `CORS_ORIGINS` / `FRONTEND_URL` match the origin you are connecting from |
 | `npm install` fails | Delete `frontend/node_modules/` and `frontend/package-lock.json`, then retry |
 
 ---
@@ -407,10 +779,11 @@ to test the full pipeline.
 
 | Component | Status |
 |---|---|
-| PostgreSQL 16 | Running in Docker on port 5432 |
+| PostgreSQL 16 | Running in Docker |
 | Flask + Gunicorn backend | Running in Docker on port 5000 |
 | React frontend (Nginx) | Running in Docker on port 80 |
-| AWS credentials | Configured in `.env` |
-| EC2 key pair | `.pem` file in `backend/` |
+| AWS credentials | Configured via `aws configure` |
+| EC2 key pair | Stored in AWS Secrets Manager |
+| Admin account | Auto-created on first startup |
 
-**Open the app → <http://localhost> — Happy Deploying! 🚀**
+**Open the app → http://localhost — Happy Deploying! 🚀**
