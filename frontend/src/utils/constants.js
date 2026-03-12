@@ -3,9 +3,10 @@
  */
 
 // API Configuration
-// Empty string = relative URLs (/api/...) — works with ALB routing in ECS.
-// Set VITE_API_URL at build time only if calling a completely separate host.
-export const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+// In production (Docker + Nginx), VITE_API_URL is not set at build time so this
+// resolves to '' — all /api/* calls are relative and proxied by Nginx to the backend.
+// In local dev without Docker, set VITE_API_URL=http://localhost:5000 in .env.local
+export const API_BASE_URL = import.meta.env.VITE_API_URL ?? '';
 
 // Deployment Steps
 export const DEPLOYMENT_STEPS = [
@@ -28,11 +29,7 @@ export const STATUS = {
     PENDING: 'pending',
     IN_PROGRESS: 'in_progress',
     SUCCESS: 'success',
-    ACTIVE: 'active',
     FAILED: 'failed',
-    CANCELLED: 'cancelled',
-    STOPPED: 'stopped',
-    TERMINATED: 'terminated',
     WARNING: 'warning'
 };
 

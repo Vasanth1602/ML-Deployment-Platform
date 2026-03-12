@@ -22,8 +22,9 @@ python-dotenv==1.0.0
 requests==2.31.0
 
 # WebSocket Support + Production WSGI Server
+# async_mode='threading' with gunicorn -k gthread — do NOT include eventlet/gevent
+# as they would monkeypatch the stdlib and conflict with gthread workers.
 python-socketio==5.11.0
-eventlet==0.35.1
 gunicorn==21.2.0
 
 # Utilities

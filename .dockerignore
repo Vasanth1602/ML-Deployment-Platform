@@ -41,7 +41,9 @@ tests/
 .DS_Store
 Thumbs.db
 
-# Secrets — injected at runtime via ECS Task Definition or AWS Secrets Manager.
-# NEVER copy .env into the image. It is excluded here as defence-in-depth.
+# Secrets — NEVER bake into Docker images.
+# .env is excluded from build context; all secrets are injected at runtime
+# via ECS Task Definition env vars / Secrets Manager, or docker-compose env: block.
 .env
 .env.*
+!.env.example

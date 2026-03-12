@@ -1,47 +1,56 @@
 # ============================================================
 # Backend Dockerfile
 # ============================================================
+#
+# Build (always from the PROJECT ROOT, not from backend/):
+#   docker build -f Dockerfile.backend -t autodeploy-backend .
+#
+# Run standalone (requires a reachable PostgreSQL first):
+#   docker run --rm \
+#     -e DATABASE_URL=postgresql://dbadmin:AutoDeploy123@<db-host>:5432/autodeploy \
+#     -e SECRET_KEY=<your-secret> \
+#     -e APP_PORT=5000 \
+#     -p 5000:5000 \
+#     autodeploy-backend
+#
+# ⚠️  DATABASE_URL must point to a running PostgreSQL instance.
+#    alembic upgrade head runs FIRST in CMD — if the DB is unreachable the
+#    container exits immediately before Gunicorn starts.
+# ============================================================
 
-# Use latest 3.12 patch to pick up security fixes automatically.
-FROM python:3.12-slim
-
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+FROM python:3.11-slim
 
 WORKDIR /app
 
+# Install system deps
 RUN apt-get update && apt-get install -y \
-  gcc \
-  libpq-dev \
-  openssh-client \
-  curl \
-  && apt-get clean && rm -rf /var/lib/apt/lists/*
+    gcc \
+    libpq-dev \
+    openssh-client \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy backend source
 COPY backend/ ./backend/
 COPY alembic/ ./alembic/
 COPY alembic.ini .
 
+# Ensure Python can resolve backend package
 ENV PYTHONPATH=/app
 
-RUN useradd -m appuser && chown -R appuser:appuser /app
-USER appuser
-
+# Runtime port — default 5000. Override with APP_PORT env var at `docker run`.
+# NOTE: EXPOSE is build-time documentation only. Docker bakes it as 5000 at build time.
+# If you change APP_PORT at runtime (e.g. APP_PORT=8080) you must also adjust
+# your -p flag:  docker run -e APP_PORT=8080 -p 8080:8080 ...
+# EXPOSE does NOT update automatically. For -P (auto-publish) keep APP_PORT=5000.
+ENV APP_PORT=5000
 EXPOSE 5000
 
-# APP_PORT defaults to 5000; override via env if changed
-HEALTHCHECK --interval=30s --timeout=5s \
-  CMD curl -f http://localhost:${APP_PORT:-5000}/api/health || exit 1
-
-# Startup:
-#   Gunicorn calls create_app() which fetches the SSH .pem from Secrets Manager
-#   via the IAM Task Role. No AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY needed.
-#
-# DB Migrations:
-#   Do NOT run alembic here — on ECS with N replicas every task would race.
-#   Run migrations as a one-off ECS task before deploying a new version:
-#     aws ecs run-task --overrides '{"containerOverrides":[{"name":"backend","command":["alembic","upgrade","head"]}]}'
-#   For local docker-compose, run manually:  docker compose run backend alembic upgrade head
-CMD ["sh", "-c", "gunicorn -k gthread -w 1 --threads 8 --bind 0.0.0.0:${APP_PORT:-5000} --timeout 300 'backend.app:create_app()'"]
+# Run migrations then start Gunicorn using factory pattern.
+# APP_PORT defaults to 5000. Override via env var in ECS Task Definition / EB / docker-compose.
+# Note: alembic upgrade head requires DATABASE_URL to be set and the DB to be reachable.
+# In ECS/EB all config is injected as environment variables — .env is never copied into the image.
+CMD ["sh", "-c", "alembic upgrade head && gunicorn -k gthread -w 1 --threads 4 --bind 0.0.0.0:${APP_PORT:-5000} --timeout 300 \"backend.app:create_app()\""]
