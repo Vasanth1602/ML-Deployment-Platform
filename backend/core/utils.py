@@ -136,7 +136,8 @@ class SSHClient:
                 raise TimeoutError(error_msg)
             
             try:
-                logger.debug(f"Attempting SSH connection to {self.hostname} (attempt {attempt}/{max_attempts})")
+                logger.error(f"[SSH-DEBUG] Attempting SSH connection to {self.hostname} key={self.key_file} (attempt {attempt}/{max_attempts})")
+                # logger.debug(f"Attempting SSH connection to {self.hostname} (attempt {attempt}/{max_attempts})")
                 
                 # Recreate the paramiko client on EVERY attempt.
                 # After any connection failure, the previous client object is in a

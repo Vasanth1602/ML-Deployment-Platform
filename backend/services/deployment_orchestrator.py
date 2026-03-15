@@ -243,17 +243,48 @@ class DeploymentOrchestrator:
                            f"Instance {instance_info['instance_id']} created",
                            'success', {'public_ip': instance_info['public_ip']})
 
+            # ── Step 3.5: Wait for EC2 readiness (AWS checks) ───────────────
+            update_progress(
+                'EC2 Readiness',
+                'Waiting for EC2 system/instance status checks to pass',
+                'in_progress'
+            )
+            try:
+                ready_info = self.aws_manager.wait_until_instance_ready(
+                    instance_info['instance_id'],
+                    timeout=config.EC2_READY_TIMEOUT,
+                    poll_interval=config.EC2_READY_POLL_INTERVAL,
+                )
+                # Refresh IP in case it changed during early boot/reload cycle
+                instance_info['public_ip'] = ready_info.get('public_ip') or instance_info['public_ip']
+                result['public_ip'] = instance_info['public_ip']
+                dep_repo.add_step(dep.id, 2, 'EC2 Status Checks Passed', 'success')
+                db.commit()
+                update_progress(
+                    'EC2 Readiness',
+                    'EC2 status checks passed; SSH should be available soon',
+                    'success',
+                    {
+                        'public_ip': instance_info['public_ip'],
+                        'system_status_ok': ready_info.get('system_status_ok', False),
+                        'instance_status_ok': ready_info.get('instance_status_ok', False),
+                    }
+                )
+            except TimeoutError as e:
+                raise Exception(f"EC2 readiness timeout: {e}")
+
             # ── Step 4: SSH + Docker ──────────────────────────────────────────
             self._check_cancel(dep.short_id)
             update_progress('Docker Installation',
                            'Waiting for SSH and installing Docker', 'in_progress')
 
             docker_manager = DockerManager(
-                instance_info['public_ip'],
+                instance_info['public_ip'],      # use private IP for SSH
                 key_file=config.PEM_KEY_PATH
             )
             try:
-                docker_manager.connect(max_wait=180, retry_interval=5,
+                docker_manager.connect(max_wait=config.SSH_READY_TIMEOUT,
+                                       retry_interval=config.SSH_RETRY_INTERVAL,
                                        progress_callback=progress_callback)
             except TimeoutError as e:
                 raise Exception(f"SSH connection timeout: {e}")
@@ -264,7 +295,7 @@ class DeploymentOrchestrator:
             if not docker_installed:
                 raise Exception(f"Failed to install Docker: {docker_msg}")
 
-            dep_repo.add_step(dep.id, 2, 'Docker Installed', 'success')
+            dep_repo.add_step(dep.id, 3, 'Docker Installed', 'success')
             db.commit()
             update_progress('Docker Installation', 'Docker installed', 'success')
 
@@ -274,11 +305,12 @@ class DeploymentOrchestrator:
                 update_progress('NGINX Installation',
                                'Installing NGINX reverse proxy', 'in_progress')
                 nginx_manager = NginxManager(
-                    instance_info['public_ip'],
+                    instance_info['public_ip'],      # use private IP for SSH
                     key_file=config.PEM_KEY_PATH
                 )
                 try:
-                    nginx_manager.connect(max_wait=180, retry_interval=5,
+                    nginx_manager.connect(max_wait=config.SSH_READY_TIMEOUT,
+                                          retry_interval=config.SSH_RETRY_INTERVAL,
                                           progress_callback=progress_callback)
                 except Exception as e:
                     raise Exception(f"SSH for NGINX failed: {e}")
@@ -287,7 +319,7 @@ class DeploymentOrchestrator:
                 if not nginx_installed:
                     raise Exception(f"Failed to install NGINX: {nginx_msg}")
 
-                dep_repo.add_step(dep.id, 3, 'NGINX Installed', 'success')
+                dep_repo.add_step(dep.id, 4, 'NGINX Installed', 'success')
                 db.commit()
                 update_progress('NGINX Installation', 'NGINX installed', 'success')
 
@@ -296,11 +328,12 @@ class DeploymentOrchestrator:
             update_progress('Repository Clone', 'Cloning GitHub repository', 'in_progress')
 
             github_manager = GitHubManager(
-                instance_info['public_ip'],
+                instance_info['public_ip'],      # use private IP for SSH
                 key_file=config.PEM_KEY_PATH
             )
             try:
-                github_manager.connect(max_wait=180, retry_interval=5,
+                github_manager.connect(max_wait=config.SSH_READY_TIMEOUT,
+                                       retry_interval=config.SSH_RETRY_INTERVAL,
                                        progress_callback=progress_callback)
             except Exception as e:
                 raise Exception(f"SSH for GitHub failed: {e}")
@@ -313,7 +346,7 @@ class DeploymentOrchestrator:
 
             result['repo_path'] = repo_path
 
-            dep_repo.add_step(dep.id, 4, 'Repository Cloned', 'success',
+            dep_repo.add_step(dep.id, 5, 'Repository Cloned', 'success',
                               message=repo_path)
             db.commit()
             update_progress('Repository Clone', f"Cloned to {repo_path}", 'success')
@@ -325,7 +358,7 @@ class DeploymentOrchestrator:
             if not files_exist:
                 raise Exception(f"Missing required files: {', '.join(missing_files)}")
 
-            dep_repo.add_step(dep.id, 5, 'Project Structure Verified', 'success')
+            dep_repo.add_step(dep.id, 6, 'Project Structure Verified', 'success')
             db.commit()
             update_progress('Project Validation', 'Project structure validated', 'success')
 
@@ -340,7 +373,7 @@ class DeploymentOrchestrator:
                 raise Exception(f"Failed to build Docker image: {build_msg}")
 
             result['image_name'] = image_name
-            dep_repo.add_step(dep.id, 6, 'Docker Image Built', 'success',
+            dep_repo.add_step(dep.id, 7, 'Docker Image Built', 'success',
                               message=image_name)
             db.commit()
             update_progress('Docker Build', f"Image built: {image_name}", 'success')
@@ -373,7 +406,7 @@ class DeploymentOrchestrator:
                 'status': 'active',
                 'updated_at': datetime.utcnow(),
             })
-            dep_repo.add_step(dep.id, 7, 'Container Started', 'success',
+            dep_repo.add_step(dep.id, 8, 'Container Started', 'success',
                               message=container_name)
             db.commit()
             update_progress('Container Deployment',
@@ -400,7 +433,7 @@ class DeploymentOrchestrator:
                 if not rl_ok:
                     raise Exception(f"NGINX reload failed: {rl_msg}")
 
-                dep_repo.add_step(dep.id, 8, 'NGINX Configured', 'success')
+                dep_repo.add_step(dep.id, 9, 'NGINX Configured', 'success')
                 db.commit()
                 update_progress('NGINX Configuration', 'NGINX configured', 'success')
                 health_check_port = 80
@@ -417,10 +450,10 @@ class DeploymentOrchestrator:
             )
 
             if is_healthy:
-                dep_repo.add_step(dep.id, 9, 'Health Check Passed', 'success')
+                dep_repo.add_step(dep.id, 10, 'Health Check Passed', 'success')
                 update_progress('Health Check', 'Application is healthy', 'success')
             else:
-                dep_repo.add_step(dep.id, 9, 'Health Check Warning', 'warning',
+                dep_repo.add_step(dep.id, 10, 'Health Check Warning', 'warning',
                                   message=health_msg)
                 update_progress('Health Check',
                                f"Health check warning: {health_msg}", 'warning')

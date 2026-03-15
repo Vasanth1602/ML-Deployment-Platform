@@ -6,6 +6,7 @@ Handles EC2 instance creation, management, and security group configuration.
 import boto3
 import logging
 import time
+import os
 from typing import Dict, Optional, List
 from botocore.exceptions import ClientError
 
@@ -68,6 +69,7 @@ class AWSManager:
             logger.info(f"Creating security group: {group_name}")
             response = self.ec2_client.create_security_group(
                 GroupName=group_name,
+                VpcId=os.getenv("EC2_VPC_ID"),  # places SG in ml-platform VPC, not default VPC
                 Description='Security group for ML application deployment'
             )
             
@@ -142,17 +144,31 @@ class AWSManager:
             logger.info(f"Creating EC2 instance: {instance_name}")
             logger.info(f"Instance type: {instance_type}, AMI: {ami_id}")
             
-            # User data script to update system on first boot
-            user_data_script = """#!/bin/bash
-            sudo apt-get update
-            sudo apt-get upgrade -y
-            """
+            user_data_script = """#cloud-config
+bootcmd:
+  - systemctl mask unattended-upgrades
+  - systemctl mask apt-daily.timer
+  - systemctl mask apt-daily-upgrade.timer
+  - systemctl stop unattended-upgrades || true
+  - systemctl stop apt-daily.timer || true
+  - systemctl stop apt-daily-upgrade.timer || true
+
+package_update: false
+package_upgrade: false
+"""
             
             instances = self.ec2_resource.create_instances(
                 ImageId=ami_id,
                 InstanceType=instance_type,
                 KeyName=key_name,
-                SecurityGroupIds=[security_group_id],
+                NetworkInterfaces=[
+                    {
+                        'DeviceIndex': 0,
+                        'SubnetId': os.getenv('EC2_SUBNET_ID'),   # ml-platform public subnet
+                        'Groups': [security_group_id],
+                        'AssociatePublicIpAddress': True
+                    }
+                ],
                 MinCount=1,
                 MaxCount=1,
                 UserData=user_data_script,
@@ -189,7 +205,8 @@ class AWSManager:
             
             public_ip = instance.public_ip_address
             private_ip = instance.private_ip_address
-            
+
+            logger.info(f"Instance IPs — public: {public_ip}, private: {private_ip}, using for SSH: {private_ip}")
             logger.info(f"Instance is running. Public IP: {public_ip}")
             
             return {
@@ -204,6 +221,80 @@ class AWSManager:
         except ClientError as e:
             logger.error(f"Error creating EC2 instance: {str(e)}")
             raise
+
+    def wait_until_instance_ready(self,
+                                  instance_id: str,
+                                  timeout: int = 300,
+                                  poll_interval: int = 10) -> Dict:
+        """
+        Wait until EC2 instance passes both AWS status checks.
+
+        EC2 being in "running" state does not guarantee SSH readiness.
+        This method waits for the AWS health checks below to become "ok":
+          - system_status.status
+          - instance_status.status
+
+        Args:
+            instance_id: EC2 instance ID
+            timeout: Max wait in seconds
+            poll_interval: Poll interval in seconds
+
+        Returns:
+            Final status payload including public/private IPs
+
+        Raises:
+            TimeoutError: If checks do not pass in time
+            ClientError: If AWS API call fails
+        """
+        start = time.time()
+        deadline = start + timeout
+
+        while time.time() < deadline:
+            instance = self.ec2_resource.Instance(instance_id)
+            instance.reload()
+
+            running = instance.state['Name'] == 'running'
+            public_ip = instance.public_ip_address
+            private_ip = instance.private_ip_address
+
+            status_resp = self.ec2_client.describe_instance_status(
+                InstanceIds=[instance_id],
+                IncludeAllInstances=True,
+            )
+            statuses = status_resp.get('InstanceStatuses', [])
+
+            system_ok = False
+            instance_ok = False
+            if statuses:
+                first = statuses[0]
+                system_ok = first.get('SystemStatus', {}).get('Status') == 'ok'
+                instance_ok = first.get('InstanceStatus', {}).get('Status') == 'ok'
+
+            logger.info(
+                "EC2 readiness poll for %s: running=%s system_ok=%s instance_ok=%s public_ip=%s",
+                instance_id,
+                running,
+                system_ok,
+                instance_ok,
+                public_ip,
+            )
+
+            if running and public_ip and system_ok and instance_ok:
+                logger.info("Instance %s passed EC2 status checks", instance_id)
+                return {
+                    'instance_id': instance_id,
+                    'public_ip': public_ip,
+                    'private_ip': private_ip,
+                    'state': instance.state['Name'],
+                    'system_status_ok': system_ok,
+                    'instance_status_ok': instance_ok,
+                }
+
+            time.sleep(poll_interval)
+
+        raise TimeoutError(
+            f"Instance {instance_id} did not pass EC2 status checks within {timeout}s"
+        )
     
     def get_instance_status(self, instance_id: str) -> Dict:
         """

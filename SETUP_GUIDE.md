@@ -278,6 +278,8 @@ AWS_KEY_PAIR_NAME=ml-deploy-key
 EC2_AMI_ID=ami-0c7217cdde317cfec    # Ubuntu 22.04 LTS — update for your region
 EC2_INSTANCE_TYPE=t3.micro
 EC2_VOLUME_SIZE=20
+EC2_VPC_ID=                         # Optional VPC override
+EC2_SUBNET_ID=                      # Optional Subnet override
 
 # ── Security Group ────────────────────────────────────────────────────────────
 SECURITY_GROUP_NAME=ml-deployment-sg
@@ -318,6 +320,10 @@ DOCKER_HOST_PORT=8000
 MAX_DEPLOYMENT_TIME=600
 HEALTH_CHECK_INTERVAL=10
 HEALTH_CHECK_RETRIES=5
+EC2_READY_TIMEOUT=300
+EC2_READY_POLL_INTERVAL=10
+SSH_READY_TIMEOUT=420
+SSH_RETRY_INTERVAL=5
 
 # ── Nginx ─────────────────────────────────────────────────────────────────────
 NGINX_HTTP_PORT=80
@@ -477,6 +483,8 @@ AWS_KEY_PAIR_NAME=ml-deploy-key
 EC2_AMI_ID=ami-019715e0d74f695be
 EC2_INSTANCE_TYPE=t3.micro
 EC2_VOLUME_SIZE=20
+EC2_VPC_ID=
+EC2_SUBNET_ID=
 SECURITY_GROUP_NAME=ml-deployment-sg
 ALLOWED_SSH_IP=0.0.0.0/0
 
@@ -498,6 +506,10 @@ DOCKER_HOST_PORT=8000
 MAX_DEPLOYMENT_TIME=600
 HEALTH_CHECK_INTERVAL=10
 HEALTH_CHECK_RETRIES=5
+EC2_READY_TIMEOUT=300
+EC2_READY_POLL_INTERVAL=10
+SSH_READY_TIMEOUT=420
+SSH_RETRY_INTERVAL=5
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 LOG_LEVEL=INFO

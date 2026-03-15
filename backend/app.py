@@ -61,11 +61,13 @@ def create_app() -> Flask:
     from .api.deployments import deployments_bp
     from .api.applications import applications_bp
     from .api.instances import instances_bp
+    from .api.auth import auth_bp
 
     app.register_blueprint(health_bp)
     app.register_blueprint(deployments_bp)
     app.register_blueprint(applications_bp)
     app.register_blueprint(instances_bp)
+    app.register_blueprint(auth_bp)
 
     # ── Static SPA ────────────────────────────────────────────────────────
     @app.route('/')

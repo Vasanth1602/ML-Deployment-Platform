@@ -71,6 +71,12 @@ class Config:
     MAX_DEPLOYMENT_TIME = int(os.getenv('MAX_DEPLOYMENT_TIME', '600'))
     HEALTH_CHECK_INTERVAL = int(os.getenv('HEALTH_CHECK_INTERVAL', '10'))
     HEALTH_CHECK_RETRIES = int(os.getenv('HEALTH_CHECK_RETRIES', '5'))
+    # EC2 readiness wait (after instance enters running)
+    EC2_READY_TIMEOUT = int(os.getenv('EC2_READY_TIMEOUT', '300'))
+    EC2_READY_POLL_INTERVAL = int(os.getenv('EC2_READY_POLL_INTERVAL', '10'))
+    # SSH readiness wait (after EC2 status checks pass)
+    SSH_READY_TIMEOUT = int(os.getenv('SSH_READY_TIMEOUT', '420'))
+    SSH_RETRY_INTERVAL = int(os.getenv('SSH_RETRY_INTERVAL', '5'))
     
     # GitHub Configuration
     GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')

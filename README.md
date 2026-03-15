@@ -128,6 +128,8 @@ AWS_KEY_PAIR_NAME=ml-deploy-key
 EC2_AMI_ID=ami-0c7217cdde317cfec    # Ubuntu 22.04 LTS — update for your region
 EC2_INSTANCE_TYPE=t3.micro
 EC2_VOLUME_SIZE=20
+EC2_VPC_ID=                         # Optional VPC override
+EC2_SUBNET_ID=                      # Optional Subnet override
 
 SECRET_KEY=<generate: python -c "import secrets; print(secrets.token_hex(32))">
 JWT_SECRET_KEY=<generate: python -c "import secrets; print(secrets.token_hex(32))">
@@ -310,6 +312,8 @@ AWS_KEY_PAIR_NAME=ml-deploy-key
 EC2_AMI_ID=ami-019715e0d74f695be
 EC2_INSTANCE_TYPE=t3.micro
 EC2_VOLUME_SIZE=20
+EC2_VPC_ID=
+EC2_SUBNET_ID=
 SECURITY_GROUP_NAME=ml-deployment-sg
 ALLOWED_SSH_IP=0.0.0.0/0
 
@@ -328,6 +332,10 @@ DOCKER_HOST_PORT=8000
 MAX_DEPLOYMENT_TIME=600
 HEALTH_CHECK_INTERVAL=10
 HEALTH_CHECK_RETRIES=5
+EC2_READY_TIMEOUT=300
+EC2_READY_POLL_INTERVAL=10
+SSH_READY_TIMEOUT=420
+SSH_RETRY_INTERVAL=5
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 LOG_LEVEL=INFO
@@ -760,6 +768,8 @@ All configuration is via environment variables. Copy `.env.example` to `.env` an
 | `EC2_AMI_ID` | _(none — required)_ | Ubuntu 22.04 LTS AMI — region-specific, must be set |
 | `EC2_INSTANCE_TYPE` | `t2.micro` | Instance type |
 | `EC2_VOLUME_SIZE` | `20` | Root disk size in GB |
+| `EC2_VPC_ID` | _(empty)_ | Optional VPC ID to launch instances into |
+| `EC2_SUBNET_ID` | _(empty)_ | Optional Subnet ID to launch instances into |
 
 ### Application Server
 
@@ -770,6 +780,7 @@ All configuration is via environment variables. Copy `.env.example` to `.env` an
 | `SECRET_KEY` | _(weak default)_ | Flask session secret — **must** be overridden in production |
 | `JWT_SECRET_KEY` | _(falls back to SECRET_KEY)_ | JWT signing key — use a different value from SECRET_KEY |
 | `JWT_EXPIRY_HOURS` | `1` | JWT token lifetime in hours |
+| `STATIC_FOLDER` | `../frontend/dist` | Path to frontend static files in production |
 
 ### First-Admin Bootstrap
 
@@ -800,6 +811,18 @@ All configuration is via environment variables. Copy `.env.example` to `.env` an
 |---|---|---|
 | `DOCKER_CONTAINER_PORT` | `8000` | Port app listens on inside container (`EXPOSE` in Dockerfile) |
 | `DOCKER_HOST_PORT` | `8000` | Port exposed on EC2 host (NGINX proxies port 80 → this) |
+
+### Deployment Settings
+
+| Variable | Default | Description |
+|---|---|---|
+| `MAX_DEPLOYMENT_TIME` | `600` | Maximum time to wait for a deployment (seconds) |
+| `HEALTH_CHECK_INTERVAL` | `10` | Time between app health checks (seconds) |
+| `HEALTH_CHECK_RETRIES` | `5` | Number of health check failures before aborting |
+| `EC2_READY_TIMEOUT` | `300` | Max wait time for EC2 to be healthy (seconds) |
+| `EC2_READY_POLL_INTERVAL` | `10` | Poll interval for EC2 status (seconds) |
+| `SSH_READY_TIMEOUT` | `420` | Max wait for SSH connection (seconds) |
+| `SSH_RETRY_INTERVAL` | `5` | Time between SSH retries (seconds) |
 
 ### Security Group
 
