@@ -19,7 +19,6 @@ class Config:
     # (ECS container metadata endpoint) in production, or via `aws configure`
     # / AWS_PROFILE for local development. Never put long-lived keys here.
     AWS_REGION = os.getenv('AWS_REGION', 'us-east-1')
-    AWS_DEFAULT_INSTANCE_TYPE = os.getenv('AWS_DEFAULT_INSTANCE_TYPE', 't2.micro')
     AWS_KEY_PAIR_NAME = os.getenv('AWS_KEY_PAIR_NAME')
     
     # EC2 Configuration
@@ -27,6 +26,9 @@ class Config:
     EC2_AMI_ID = os.getenv('EC2_AMI_ID')
     EC2_INSTANCE_TYPE = os.getenv('EC2_INSTANCE_TYPE', 't2.micro')
     EC2_VOLUME_SIZE = int(os.getenv('EC2_VOLUME_SIZE', '20'))
+    # ECS only — leave blank for local dev (default VPC is used)
+    EC2_VPC_ID = os.getenv('EC2_VPC_ID', '')
+    EC2_SUBNET_ID = os.getenv('EC2_SUBNET_ID', '')
     
     # Security Group Configuration
     SECURITY_GROUP_NAME = os.getenv('SECURITY_GROUP_NAME', 'ml-deployment-sg')
@@ -42,6 +44,10 @@ class Config:
     # JWT Authentication
     JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY', os.getenv('SECRET_KEY', 'dev-jwt-secret-change-in-production'))
     JWT_EXPIRY_HOURS = int(os.getenv('JWT_EXPIRY_HOURS', '1'))
+
+    # First-Admin Bootstrap
+    ADMIN_EMAIL = os.getenv('ADMIN_EMAIL', '')
+    ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD', '')
 
     # CORS / Origin Configuration
     # Comma-separated list of allowed origins for API (Flask-CORS) and WebSocket (SocketIO).
@@ -85,6 +91,8 @@ class Config:
     LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
     LOG_FILE = os.getenv('LOG_FILE', 'deployment.log')
     
+    # PEM / SSH Key Configuration
+    PEM_SECRET_NAME = os.getenv('PEM_SECRET_NAME', '')
     # PEM key path — single source of truth for where the key is written and read
     PEM_KEY_PATH = os.getenv('PEM_KEY_PATH', '/app/ml-deploy-key.pem')
 

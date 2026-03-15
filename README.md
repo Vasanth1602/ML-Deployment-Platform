@@ -92,6 +92,9 @@ It acts as a lightweight deployment platform on top of EC2 — allowing ML engin
 
 > **Full setup walkthrough (AWS credentials, key pairs, etc.):** see [SETUP_GUIDE.md](./SETUP_GUIDE.md)
 
+> **Running this locally?** Docker Compose is the only path you need. Follow the steps below.
+> **Want to self-host this platform on AWS ECS?** That is an optional advanced step covered in the [ECS section of SETUP_GUIDE.md](./SETUP_GUIDE.md#optional-self-hosting-the-platform-on-aws-ecs).
+
 This is the **fastest way** to get the entire platform running. One command starts PostgreSQL, the Flask backend, and the React frontend.
 
 ### Prerequisites
@@ -128,8 +131,8 @@ AWS_KEY_PAIR_NAME=ml-deploy-key
 EC2_AMI_ID=ami-0c7217cdde317cfec    # Ubuntu 22.04 LTS — update for your region
 EC2_INSTANCE_TYPE=t3.micro
 EC2_VOLUME_SIZE=20
-EC2_VPC_ID=                         # Optional VPC override
-EC2_SUBNET_ID=                      # Optional Subnet override
+EC2_VPC_ID=                         # ECS only — leave blank for local dev
+EC2_SUBNET_ID=                      # ECS only — leave blank for local dev
 
 SECRET_KEY=<generate: python -c "import secrets; print(secrets.token_hex(32))">
 JWT_SECRET_KEY=<generate: python -c "import secrets; print(secrets.token_hex(32))">
@@ -143,9 +146,6 @@ ADMIN_PASSWORD=ChangeMe123!
 POSTGRES_USER=dbadmin
 POSTGRES_PASSWORD=your_db_password_here
 POSTGRES_DB=autodeploy
-DB_USER=dbadmin
-DB_PASSWORD=your_db_password_here
-DB_NAME=autodeploy
 
 # PEM key — store in AWS Secrets Manager (see SETUP_GUIDE.md §4)
 # Leave blank to skip fetch and mount the .pem file manually via Docker volume
@@ -676,6 +676,7 @@ ML-Deployment-Platform/
 │   ├── __init__.py                 Re-exports socketio for blueprint imports
 │   │
 │   ├── api/                        Flask Blueprints (HTTP routes)
+│   │   ├── admin.py                Admin dashboard and system endpoints
 │   │   ├── health.py               GET /api/health
 │   │   ├── auth.py                 POST /api/auth/login, /refresh, /logout
 │   │   ├── deployments.py          Deployment CRUD + trigger
@@ -694,6 +695,8 @@ ML-Deployment-Platform/
 │   │   └── nginx/                  NGINX install & site config on EC2
 │   │
 │   ├── core/                       Shared utilities
+│   │   ├── auth_middleware.py      JWT verification and RBAC decorators
+│   │   ├── jwt_utils.py            Token generation and validation
 │   │   ├── utils.py                SSH client, PEM loader (Secrets Manager)
 │   │   ├── input_validators.py     GitHub URL & config validation
 │   │   └── logging_config.py       Coloured, structured logging setup
@@ -738,6 +741,7 @@ ML-Deployment-Platform/
 ├── requirements.txt                Python dependencies
 ├── .env.example                    Environment variable template
 ├── .env                            Your secrets (git-ignored)
+├── .dockerignore                   Files excluded from Docker builds
 ├── SETUP_GUIDE.md                  Step-by-step setup from scratch
 └── README.md                       This file
 ```
@@ -757,9 +761,10 @@ All configuration is via environment variables. Copy `.env.example` to `.env` an
 |---|---|---|
 | `AWS_REGION` | Region where EC2 instances are created | e.g. `us-east-1` |
 | `AWS_KEY_PAIR_NAME` | Name of EC2 key pair (must exist in region) | e.g. `ml-deploy-key` |
-| `AWS_DEFAULT_INSTANCE_TYPE` | Fallback instance type | `t3.micro` |
 
-> ⚠️ `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` are intentionally absent. Use `aws configure` locally or an IAM role in ECS/EC2.
+> ⚠️ `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` are intentionally absent.
+> - **Local dev:** run `aws configure` once — boto3 picks up `~/.aws/credentials` automatically.
+> - **ECS:** attach an IAM Role to the ECS Task Definition — boto3 resolves credentials from the container metadata endpoint. No keys needed anywhere.
 
 ### EC2 Instance
 
@@ -768,8 +773,10 @@ All configuration is via environment variables. Copy `.env.example` to `.env` an
 | `EC2_AMI_ID` | _(none — required)_ | Ubuntu 22.04 LTS AMI — region-specific, must be set |
 | `EC2_INSTANCE_TYPE` | `t2.micro` | Instance type |
 | `EC2_VOLUME_SIZE` | `20` | Root disk size in GB |
-| `EC2_VPC_ID` | _(empty)_ | Optional VPC ID to launch instances into |
-| `EC2_SUBNET_ID` | _(empty)_ | Optional Subnet ID to launch instances into |
+| `EC2_VPC_ID` | _(empty)_ | **ECS only** — VPC ID where EC2 instances are launched. Leave blank for local dev. |
+| `EC2_SUBNET_ID` | _(empty)_ | **ECS only** — public subnet ID inside the above VPC. Leave blank for local dev. |
+
+> **VPC conflict explained:** When the platform itself runs on ECS inside a custom VPC, EC2 instances provisioned by the backend must land in the *same* VPC — otherwise they lose network connectivity to the platform. Set `EC2_VPC_ID` and `EC2_SUBNET_ID` to match the ECS VPC. For local dev these are not needed.
 
 ### Application Server
 
@@ -796,7 +803,10 @@ All configuration is via environment variables. Copy `.env.example` to `.env` an
 | Variable | Default | Description |
 |---|---|---|
 | `PEM_SECRET_NAME` | _(empty)_ | AWS Secrets Manager secret name — leave blank to skip fetch |
-| `PEM_KEY_PATH` | `/app/ml-deploy-key.pem` | Path where the key is written / read inside the container |
+| `PEM_KEY_PATH` | `/app/ml-deploy-key.pem` | Single source of truth — where the key is written and read |
+
+> - **Local dev:** place the `.pem` file in `backend/` and mount it as a read-only volume (the compose file does this automatically). Leave `PEM_SECRET_NAME` blank.
+> - **ECS:** store the key in AWS Secrets Manager and set `PEM_SECRET_NAME`. The backend fetches it at container startup and writes it to `PEM_KEY_PATH`.
 
 ### CORS / Frontend
 
@@ -849,9 +859,9 @@ All configuration is via environment variables. Copy `.env.example` to `.env` an
 | Variable | Description |
 |---|---|
 | `DATABASE_URL` | Full SQLAlchemy connection string |
-| `POSTGRES_USER` / `DB_USER` | PostgreSQL username |
-| `POSTGRES_PASSWORD` / `DB_PASSWORD` | PostgreSQL password |
-| `POSTGRES_DB` / `DB_NAME` | Database name |
+| `POSTGRES_USER`     | PostgreSQL username |
+| `POSTGRES_PASSWORD` | PostgreSQL password |
+| `POSTGRES_DB`       | Database name |
 
 ---
 

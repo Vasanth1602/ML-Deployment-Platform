@@ -107,7 +107,12 @@ Thumbs.db
 tmp/
 temp/
 *.resolved                   # generated task resolution artefacts (e.g. task.md.resolved)
+Issues faced.txt
+ECS_ENV_REFERENCE.md
 
+# ------------------------------------------------------------
+# Tests
+# ------------------------------------------------------------
 tests/
 Makefile
 .coveragerc

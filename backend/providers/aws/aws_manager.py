@@ -69,7 +69,7 @@ class AWSManager:
             logger.info(f"Creating security group: {group_name}")
             response = self.ec2_client.create_security_group(
                 GroupName=group_name,
-                VpcId=os.getenv("EC2_VPC_ID"),  # places SG in ml-platform VPC, not default VPC
+                VpcId=config.EC2_VPC_ID,  # places SG in ml-platform VPC, not default VPC
                 Description='Security group for ML application deployment'
             )
             
@@ -164,7 +164,7 @@ package_upgrade: false
                 NetworkInterfaces=[
                     {
                         'DeviceIndex': 0,
-                        'SubnetId': os.getenv('EC2_SUBNET_ID'),   # ml-platform public subnet
+                        'SubnetId': config.EC2_SUBNET_ID,   # ml-platform public subnet
                         'Groups': [security_group_id],
                         'AssociatePublicIpAddress': True
                     }

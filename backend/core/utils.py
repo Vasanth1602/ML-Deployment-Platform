@@ -29,7 +29,7 @@ def load_pem_from_secrets_manager() -> Optional[str]:
     Called once at Flask app startup (create_app) so the key is ready
     before any deployment SSH attempt.
     """
-    secret_name = os.getenv('PEM_SECRET_NAME')
+    secret_name = config.PEM_SECRET_NAME
 
     if not secret_name:
         logger.warning(
@@ -74,15 +74,15 @@ class SSHClient:
         self.username = username
 
         import os
-        if key_file and not os.path.isabs(key_file):
-            # EC2_KEY_DIR controls where PEM files are resolved from.
-            # Localhost default: project root (where the .pem sits after download).
-            # Docker / ECS: set EC2_KEY_DIR=/app/backend in the environment.
-            _key_base = os.getenv(
-                'EC2_KEY_DIR',
-                os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-            )
-            key_file = os.path.join(_key_base, key_file)
+        # if key_file and not os.path.isabs(key_file):
+        #     # EC2_KEY_DIR controls where PEM files are resolved from.
+        #     # Localhost default: project root (where the .pem sits after download).
+        #     # Docker / ECS: set EC2_KEY_DIR=/app/backend in the environment.
+        #     _key_base = os.getenv(
+        #         'EC2_KEY_DIR',
+        #         os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+        #     )
+        #     key_file = os.path.join(_key_base, key_file)
 
         self.key_file = key_file
         self.client = None

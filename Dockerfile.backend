@@ -41,6 +41,12 @@ COPY alembic.ini .
 # Ensure Python can resolve backend package
 ENV PYTHONPATH=/app
 
+# Create non-root user for security
+RUN useradd -m -u 1000 appuser \
+    && chown -R appuser:appuser /app
+
+USER appuser
+
 # Runtime port — default 5000. Override with APP_PORT env var at `docker run`.
 # NOTE: EXPOSE is build-time documentation only. Docker bakes it as 5000 at build time.
 # If you change APP_PORT at runtime (e.g. APP_PORT=8080) you must also adjust

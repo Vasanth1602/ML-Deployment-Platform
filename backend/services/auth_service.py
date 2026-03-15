@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from ..database.models import User
 from ..core.jwt_utils import create_access_token
+from ..config import config
 
 logger = logging.getLogger(__name__)
 
@@ -124,8 +125,8 @@ def bootstrap_admin() -> None:
     import os
     from ..database.connection import SessionLocal
 
-    admin_email    = os.getenv('ADMIN_EMAIL', '').strip().lower()
-    admin_password = os.getenv('ADMIN_PASSWORD', '')
+    admin_email    = config.ADMIN_EMAIL.strip().lower()
+    admin_password = config.ADMIN_PASSWORD
 
     if not admin_email or not admin_password:
         logger.debug('bootstrap_admin: ADMIN_EMAIL/ADMIN_PASSWORD not set — skipping')

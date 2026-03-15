@@ -1,8 +1,13 @@
 # 🚀 Complete Setup Guide — ML Deployment Platform
 
-This guide walks you through setting up the platform **from absolute scratch**.
+This guide covers **local development setup using Docker Compose**.
+That is the recommended starting point for everyone.
 
-Two setup paths are documented:
+If you later want to self-host this platform on AWS ECS, there is an optional
+section at the bottom: [Optional: Self-Hosting the Platform on AWS ECS](#optional-self-hosting-the-platform-on-aws-ecs).
+You do not need to read that section to get started locally.
+
+Two local setup paths are documented:
 
 | Path | Best For |
 |---|---|
@@ -64,7 +69,7 @@ cd ML-Deployment-Platform
 
 ---
 
-## 3. AWS Credentials Setup
+## 3. AWS Credentials Setup [Local + ECS]
 
 The platform uses **boto3** to provision EC2 instances. boto3 resolves credentials automatically — you **never put `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` in `.env` or any env file**.
 
@@ -150,7 +155,9 @@ Use the **same region** for your credentials, key pair, AMI ID, and Secrets Mana
 
 ---
 
-## 4. Store PEM Key in AWS Secrets Manager
+## 4. Store PEM Key in AWS Secrets Manager [Optional for Local Dev]
+
+> **Local dev only?** This step is optional. Skip to Step 5 and use Option A (manual `.pem` file copy) instead.
 
 The EC2 SSH private key is stored in AWS Secrets Manager and fetched automatically at backend startup. It is **never** in the Docker image, repository, or any committed file.
 
@@ -208,9 +215,9 @@ If `PEM_SECRET_NAME` is not set, the fetch is skipped and a warning is logged. S
    - **Private key file format:** `.pem`
 4. Click **Create key pair** — the browser downloads `ml-deploy-key.pem`
 
-### Step 5.2 — Upload to Secrets Manager
-
-Follow Step 4 above using this downloaded `.pem` file.
+### Step 5.2 — PEM Key: Choose Your Approach
+  Local dev  → Place in backend/ folder (Step 5.3) — Secrets Manager not needed
+  ECS        → Upload to Secrets Manager (Step 4)
 
 ### Step 5.3 — Place in Project (for Docker volume mount / Docker Compose)
 
@@ -269,6 +276,11 @@ copy .env.example .env
 
 Open `.env` and fill in the mandatory values:
 
+> **VPC Configuration Note (ECS/Custom VPCs):**
+> Default VPC is fine for local dev. When self-hosting the platform in a custom VPC (ECS),
+> set `EC2_VPC_ID` and `EC2_SUBNET_ID` to match the platform's VPC/subnet to prevent connectivity loss.
+> Find these values in: AWS Console → VPC → Your VPCs / Subnets.
+
 ```env
 # ── AWS (no static keys — use aws configure instead) ─────────────────────────
 AWS_REGION=us-east-1
@@ -306,9 +318,6 @@ PEM_KEY_PATH=/app/ml-deploy-key.pem
 POSTGRES_USER=dbadmin
 POSTGRES_PASSWORD=your_db_password_here
 POSTGRES_DB=autodeploy
-DB_USER=dbadmin
-DB_PASSWORD=your_db_password_here
-DB_NAME=autodeploy
 
 # ── CORS / Frontend ───────────────────────────────────────────────────────────
 FRONTEND_URL=http://localhost
@@ -458,6 +467,11 @@ docker exec -it ml-postgres pg_isready -U dbadmin -d autodeploy
 ### M4 — Create `backend.env`
 
 Create `backend.env` in any directory on your machine. **Do not commit this file.**
+
+> **VPC Configuration Note (ECS/Custom VPCs):**
+> Default VPC is fine for local dev. When self-hosting the platform in a custom VPC (ECS),
+> set `EC2_VPC_ID` and `EC2_SUBNET_ID` to match the platform's VPC/subnet to prevent connectivity loss.
+> Find these values in: AWS Console → VPC → Your VPCs / Subnets.
 
 ```env
 # ── Database ──────────────────────────────────────────────────────────────────
@@ -795,7 +809,73 @@ Use `ADMIN_EMAIL` and `ADMIN_PASSWORD` from your `.env` or `backend.env`. The ac
 | Flask + Gunicorn backend | Running in Docker on port 5000 |
 | React frontend (Nginx) | Running in Docker on port 80 |
 | AWS credentials | Configured via `aws configure` |
-| EC2 key pair | Stored in AWS Secrets Manager |
+EC2 key pair | Placed in backend/ folder (or Secrets Manager for ECS)
 | Admin account | Auto-created on first startup |
 
 **Open the app → http://localhost — Happy Deploying! 🚀**
+
+---
+
+## Optional: Self-Hosting the Platform on AWS ECS
+
+If you want to deploy the platform itself on AWS ECS rather than running it locally,
+the following additional steps are required.
+These are separate from the local dev setup above.
+
+---
+
+### ECS Step 1 — Create an IAM Role for the ECS Task
+
+1. AWS Console → **IAM** → **Roles** → **Create role**
+2. **Trusted entity type:** AWS service — **Use case:** Elastic Container Service Task
+3. Attach these permissions:
+   - Scoped EC2 permissions (see **IAM Least-Privilege** in `README.md`)
+   - `secretsmanager:GetSecretValue` on your PEM secret ARN
+4. Name it, e.g. `ml-platform-task-role`
+
+This role gives the backend container AWS access at runtime. No access keys are used anywhere.
+
+---
+
+### ECS Step 2 — Attach the IAM Role to Your ECS Task Definition
+
+1. ECS Console → **Task Definitions** → your task → create a new revision
+2. Under **Task role** → select `ml-platform-task-role`
+3. Under **Task execution role** → select `ecsTaskExecutionRole` (standard AWS-managed role)
+
+boto3 inside the container will now resolve credentials automatically via the container metadata endpoint.
+
+---
+
+### ECS Step 3 — Store PEM Key in AWS Secrets Manager
+
+Already documented in [Step 4](#4-store-pem-key-in-aws-secrets-manager-ecs) of this guide.
+Confirm that `PEM_SECRET_NAME` is set in your ECS Task Definition under **Environment variables**.
+
+---
+
+### ECS Step 4 — Set VPC and Subnet in ECS Task Environment Variables
+
+The backend provisions EC2 instances for users. Without these, EC2 launches in the
+default VPC instead of your platform’s custom VPC, breaking connectivity between them.
+
+Find the values:
+- AWS Console → **VPC** → **Your VPCs** → copy the VPC ID of your ECS VPC
+- AWS Console → **Subnets** → pick a **public** subnet in that VPC → copy its ID
+
+Add to your ECS Task Definition under **Environment variables**:
+
+```
+EC2_VPC_ID=vpc-xxxxxxxxxxxxxxxxx
+EC2_SUBNET_ID=subnet-xxxxxxxxxxxxxxxxx
+```
+### ECS Step X — Set DATABASE_URL in ECS Task Definition
+
+The platform uses RDS (or any external PostgreSQL) in ECS — not a
+local container. Set DATABASE_URL directly in your ECS Task Definition
+under Environment variables:
+
+  DATABASE_URL=postgresql://<user>:<password>@<your-rds-endpoint>:5432/<dbname>
+
+Find your RDS endpoint:
+  AWS Console → RDS → Databases → your instance → Connectivity → Endpoint

@@ -32,7 +32,11 @@ def create_app() -> Flask:
     # Restrict CORS to known origin in production; '*' is only a safe fallback
     # for local dev. Set CORS_ORIGINS env var in ECS Task Definition, e.g.:
     #   CORS_ORIGINS=https://yourdomain.com
-    _cors_origins = os.getenv('CORS_ORIGINS', '*')
+    _raw_origins = os.getenv('CORS_ORIGINS', '*').strip()
+    _cors_origins = (
+        '*' if _raw_origins == '*'
+        else [o.strip() for o in _raw_origins.split(',') if o.strip()]
+    )    
     CORS(app, origins=_cors_origins)
 
     # ── Logging ───────────────────────────────────────────────────────────
@@ -44,25 +48,30 @@ def create_app() -> Flask:
     # ── SocketIO ──────────────────────────────────────────────────────────
     socketio.init_app(
         app,
-        cors_allowed_origins=os.getenv('CORS_ORIGINS', '*'),
+        cors_allowed_origins=_cors_origins,
         ping_timeout=300,     # 5 min — longer than any deployment
         ping_interval=25,
         async_mode='threading',
     )
 
     # ── Database ──────────────────────────────────────────────────────────
+    from .services.auth_service import bootstrap_admin
+
     with app.app_context():
         init_db()
         _ensure_default_tenant(logger)
+        bootstrap_admin()
 
     # ── Blueprints ────────────────────────────────────────────────────────
     # Imported INSIDE factory to avoid circular imports at module load time.
+    from .api.admin import admin_bp
     from .api.health import health_bp
     from .api.deployments import deployments_bp
     from .api.applications import applications_bp
     from .api.instances import instances_bp
     from .api.auth import auth_bp
 
+    app.register_blueprint(admin_bp)
     app.register_blueprint(health_bp)
     app.register_blueprint(deployments_bp)
     app.register_blueprint(applications_bp)
