@@ -59,4 +59,4 @@ EXPOSE 5000
 # APP_PORT defaults to 5000. Override via env var in ECS Task Definition / EB / docker-compose.
 # Note: alembic upgrade head requires DATABASE_URL to be set and the DB to be reachable.
 # In ECS/EB all config is injected as environment variables — .env is never copied into the image.
-CMD ["sh", "-c", "alembic upgrade head && gunicorn -k gthread -w 1 --threads 4 --bind 0.0.0.0:${APP_PORT:-5000} --timeout 300 \"backend.app:create_app()\""]
+CMD ["sh", "-c", "gunicorn -k gthread -w 1 --threads 4 --bind 0.0.0.0:${APP_PORT:-5000} --timeout 300 \"backend.app:create_app()\""]

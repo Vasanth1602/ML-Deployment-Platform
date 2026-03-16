@@ -40,6 +40,32 @@ services:
     networks:
       - app_network
 
+  # ─────────────────────────────────────────────────────────
+  # DB Migrations — runs alembic upgrade head then exits
+  # Runs automatically before backend starts
+  # ─────────────────────────────────────────────────────────
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    command: alembic upgrade head                  # overrides Gunicorn CMD
+    env_file:
+      - .env
+
+    environment:
+      # ⚠️ CRITICAL: use service name "postgres" NOT "localhost"
+      # Inside Docker, localhost = the backend container itself
+      # "postgres" = the postgres service on the shared Docker network
+      DATABASE_URL: postgresql://${POSTGRES_USER:-dbadmin}:${POSTGRES_PASSWORD:-AutoDeploy123}@postgres:5432/${POSTGRES_DB:-autodeploy}
+
+      # EC2_KEY_DIR tells SSHClient where to look for .pem files inside the container.
+      # The volume mount below places the key at /app/backend/<keyname>.pem.
+      # EC2_KEY_DIR: /app/backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - app_network
 
   # ─────────────────────────────────────────────────────────
   # 2. Flask Backend
@@ -70,6 +96,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy   # wait for postgres to be ready before starting
+      migrate:
+        condition: service_completed_successfully
 
     # ── SSH key for EC2 deployments ────────────────────────────────────────────
     # The PEM file must exist on the host BEFORE running `docker compose up`.
