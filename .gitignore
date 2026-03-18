@@ -102,14 +102,50 @@ Thumbs.db
 *~
 
 # ------------------------------------------------------------
+# Terraform
+# ------------------------------------------------------------
+
+# Provider binaries — huge (~200MB), never commit
+**/.terraform/
+
+# State files — contain secrets (DB passwords, ARNs, IPs)
+**/*.tfstate
+**/*.tfstate.backup
+
+# Plan output — can contain secrets in plain text
+*.tfplan
+**/*.tfplan
+
+# Crash logs
+crash.log
+crash.*.log
+
+# Local override files — machine-specific, never shared
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Terraform CLI config — personal credentials/settings
+.terraformrc
+terraform.rc
+
+# Terraform docs
+/infrastructure/docs/*.md
+
+# NOTE: .terraform.lock.hcl is intentionally NOT ignored.
+#       Commit it — locks provider versions for all teammates + CI.
+
+# ------------------------------------------------------------
 # Misc
 # ------------------------------------------------------------
+
 tmp/
 temp/
 *.resolved                   # generated task resolution artefacts (e.g. task.md.resolved)
 Issues faced.txt
 ECS_ENV_REFERENCE.md
-
+ecs_fargate_setup_flow.html
 # ------------------------------------------------------------
 # Tests
 # ------------------------------------------------------------

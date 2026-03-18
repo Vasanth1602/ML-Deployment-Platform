@@ -28,7 +28,7 @@ class SocketService {
         const token = localStorage.getItem(TOKEN_KEY);
 
         this.socket = io(API_BASE_URL, {
-            transports: ['websocket', 'polling'],
+            transports: ['polling', 'websocket'],
             reconnection: true,
             reconnectionDelay: 1000,
             reconnectionAttempts: 10,
