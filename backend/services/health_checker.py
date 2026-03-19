@@ -52,7 +52,7 @@ class HealthChecker:
             return False, {'error': str(e)}
     
     def check_application_health(self, 
-                                endpoint: str = '/',
+                                endpoint: str = '/health',
                                 timeout: int = 10,
                                 expected_status: int = 200) -> Tuple[bool, Dict]:
         """
@@ -103,7 +103,7 @@ class HealthChecker:
     def wait_for_healthy(self, 
                         max_retries: int = 10,
                         retry_interval: int = 10,
-                        endpoint: str = '/') -> Tuple[bool, str]:
+                        endpoint: str = '/health') -> Tuple[bool, str]:
         """
         Wait for application to become healthy.
         
@@ -138,7 +138,7 @@ class HealthChecker:
     def comprehensive_health_check(self, 
                                   docker_manager,
                                   container_name: str,
-                                  endpoint: str = '/') -> Dict:
+                                  endpoint: str = '/health') -> Dict:
         """
         Perform comprehensive health check (container + application).
         

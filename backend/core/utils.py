@@ -5,6 +5,7 @@ Provides SSH connection, remote command execution, and helper utilities.
 
 import os
 import time
+import socket
 import logging
 import paramiko
 import boto3
@@ -16,6 +17,37 @@ from ..config import config
 logger = logging.getLogger(__name__)
 
 PEM_PATH = config.PEM_KEY_PATH
+
+
+def is_inside_aws():
+    # Priority 1: ENV (reliable)
+    if os.getenv("RUNNING_IN_AWS") == "true":
+        return True
+
+    # Fallback: metadata (best effort)
+    try:
+        requests.get(
+            "http://169.254.169.254/latest/meta-data/",
+            timeout=1
+        )
+        return True
+    except:
+        return False
+
+
+def resolve_hostname(instance) -> str:
+    """
+    Decide whether to use private or public IP for SSH.
+
+    - Inside AWS → use private IP (same VPC, avoids hairpinning through IGW)
+    - Outside AWS (local dev) → use public IP
+    """
+    if is_inside_aws() and instance.private_ip_address:
+        logger.info(f"[SSH] Using PRIVATE IP: {instance.private_ip_address}")
+        return instance.private_ip_address
+
+    logger.info(f"[SSH] Using PUBLIC IP: {instance.public_ip_address}")
+    return instance.public_ip_address
 
 
 def load_pem_from_secrets_manager() -> Optional[str]:
@@ -323,30 +355,31 @@ class SSHClient:
             logger.info(f"SSH connection to {self.hostname} closed")
 
 
-def wait_for_ssh(hostname: str, username: str = 'ubuntu', key_file: Optional[str] = None, 
-                 max_wait: int = 300, retry_interval: int = 5,
-                 progress_callback: Optional[callable] = None) -> SSHClient:
-    """
-    Wait for SSH to become available on a host with progress updates.
-    
-    Args:
-        hostname: Host to connect to
-        username: SSH username
-        key_file: Path to private key file
-        max_wait: Maximum time to wait in seconds (default: 180s)
-        retry_interval: Time between retries in seconds (default: 5s)
-        progress_callback: Optional callback for progress updates
-        
-    Returns:
-        Connected SSHClient instance
-        
-    Raises:
-        TimeoutError: SSH not available within max_wait
-        paramiko.AuthenticationException: Wrong credentials
-    """
-    ssh = SSHClient(hostname, username, key_file)
-    ssh.connect(max_wait, retry_interval, progress_callback)
-    return ssh
+def wait_for_ssh(host, port=22, timeout=300, interval=5):
+    print(f"[SSH-WAIT] Waiting for SSH banner on {host}:{port}...")
+
+    start = time.time()
+
+    while time.time() - start < timeout:
+        try:
+            sock = socket.create_connection((host, port), timeout=5)
+            sock.settimeout(5)
+
+            banner = sock.recv(1024).decode(errors="ignore")
+            sock.close()
+
+            if "SSH" in banner:
+                print("[SSH-WAIT] ✅ SSH banner received")
+                return True
+            else:
+                print(f"[SSH-WAIT] ⏳ Port open but no SSH banner yet: {banner.strip()}")
+
+        except Exception as e:
+            print(f"[SSH-WAIT] ⏳ Not ready: {e}")
+
+        time.sleep(interval)
+
+    raise TimeoutError("SSH not ready (banner not received)")
 
 
 def check_url_health(url: str, timeout: int = 10, expected_status: int = 200) -> bool:

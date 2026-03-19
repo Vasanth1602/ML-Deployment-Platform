@@ -35,9 +35,8 @@ htmlcov/
 
 # Logs
 *.log
-logs/
-deployment_logs/
-backend/deployment_logs/     # nested deployment log folder
+**/logs/
+**/deployment_logs/
 
 # ------------------------------------------------------------
 # Environment Variables
@@ -59,7 +58,6 @@ aws_credentials.json
 # Node / Frontend
 # ------------------------------------------------------------
 node_modules/
-frontend/node_modules/
 frontend/dist/
 frontend/build/
 frontend/.vite/
@@ -77,7 +75,10 @@ frontend/.env.production
 # ------------------------------------------------------------
 docker-compose.override.yml
 *.tar
-*.gz
+
+# Compressed artifacts
+*.tar.gz
+*.zip
 
 # ------------------------------------------------------------
 # Database
@@ -130,6 +131,11 @@ override.tf.json
 .terraformrc
 terraform.rc
 
+#variables
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+
 # Terraform docs
 /infrastructure/docs/*.md
 
@@ -153,3 +159,4 @@ tests/
 Makefile
 .coveragerc
 pytest.ini
+requirements-dev.txt           # temporary for local testing

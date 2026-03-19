@@ -11,6 +11,7 @@ from flask_socketio import SocketIO, emit
 import logging
 
 from .core.logging_config import configure_logging
+from .core.utils import load_pem_from_secrets_manager
 from .config import config
 from .database.connection import init_db, db_session, check_db_connection
 from .database.models import Tenant
@@ -44,6 +45,12 @@ def create_app() -> Flask:
         log_file=config.LOG_FILE,
         console_level=getattr(logging, config.LOG_LEVEL.upper(), logging.INFO)
     )
+
+    # ── Load SSH Identity ──────────────────────────────────────────────────
+    try:
+        load_pem_from_secrets_manager()
+    except Exception as e:
+        logger.error(f"Could not load PEM from Secrets Manager: {e}")
 
     # ── SocketIO ──────────────────────────────────────────────────────────
     socketio.init_app(

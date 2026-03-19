@@ -33,6 +33,10 @@ class Config:
     # Security Group Configuration
     SECURITY_GROUP_NAME = os.getenv('SECURITY_GROUP_NAME', 'ml-deployment-sg')
     ALLOWED_SSH_IP = os.getenv('ALLOWED_SSH_IP', '0.0.0.0/0')
+    # When running on ECS/EC2, set this to the platform's own security group ID
+    # so deployed EC2 instances only accept SSH from the platform — not the internet.
+    # Leave blank for local dev (falls back to ALLOWED_SSH_IP CIDR).
+    PLATFORM_SECURITY_GROUP_ID = os.getenv('PLATFORM_SECURITY_GROUP_ID', '')
     
     # Application Configuration
     APP_PORT = int(os.getenv('APP_PORT', '5000'))
@@ -110,13 +114,29 @@ class Config:
     @classmethod
     def get_security_group_rules(cls):
         """Get security group rules based on NGINX configuration."""
-        rules = [
-            {
+
+        # SSH rule — use SG-to-SG when running on AWS (more secure),
+        # fall back to CIDR for local dev.
+        if cls.PLATFORM_SECURITY_GROUP_ID:
+            ssh_rule = {
                 'IpProtocol': 'tcp',
                 'FromPort': 22,
                 'ToPort': 22,
-                'IpRanges': [{'CidrIp': cls.ALLOWED_SSH_IP, 'Description': 'SSH access'}]
-            },
+                'UserIdGroupPairs': [{
+                    'GroupId': cls.PLATFORM_SECURITY_GROUP_ID,
+                    'Description': 'SSH from platform ECS security group only'
+                }]
+            }
+        else:
+            ssh_rule = {
+                'IpProtocol': 'tcp',
+                'FromPort': 22,
+                'ToPort': 22,
+                'IpRanges': [{'CidrIp': cls.ALLOWED_SSH_IP, 'Description': 'SSH access (local dev)'}]
+            }
+
+        rules = [
+            ssh_rule,
             {
                 'IpProtocol': 'tcp',
                 'FromPort': 80,

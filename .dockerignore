@@ -13,6 +13,9 @@ venv/
 .venv/
 env/
 
+#keys
+backend/*.pem
+
 # SQLite dev database (PostgreSQL is used in containers)
 backend/deployment_platform.db
 deployment_platform.db
@@ -28,7 +31,6 @@ frontend/dist/
 
 # Git
 .git/
-.gitignore
 
 # Tests
 tests/

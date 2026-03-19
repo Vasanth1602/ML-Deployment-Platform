@@ -22,7 +22,7 @@ from ..providers.nginx.nginx_manager import NginxManager
 from ..services.health_checker import HealthChecker
 from ..core.logging_config import set_deployment_context, clear_deployment_context
 from ..core.input_validators import validate_github_url, validate_deployment_config
-from ..core.utils import sanitize_name, format_deployment_url, parse_github_url
+from ..core.utils import sanitize_name, format_deployment_url, parse_github_url, resolve_hostname, wait_for_ssh
 from ..config import config
 from ..database.models import Application
 
@@ -275,11 +275,24 @@ class DeploymentOrchestrator:
 
             # ── Step 4: SSH + Docker ──────────────────────────────────────────
             self._check_cancel(dep.short_id)
+
+            # Resolve correct SSH host: private IP inside AWS, public IP locally
+            instance_obj = self.aws_manager.ec2_resource.Instance(instance_info['instance_id'])
+            instance_obj.reload()
+            ssh_host = resolve_hostname(instance_obj)
+            logger.error(f"[SSH-DEBUG] Final host used for SSH: {ssh_host}")
+
+            # Wait for SSH port to be open before using Paramiko
+            wait_for_ssh(ssh_host)
+            logger.info("SSH banner received. Waiting 10s for SSH daemon to strictly stabilize...")
+            import time
+            time.sleep(10)   # give SSH daemon time to stabilize
+
             update_progress('Docker Installation',
                            'Waiting for SSH and installing Docker', 'in_progress')
 
             docker_manager = DockerManager(
-                instance_info['public_ip'],      # use private IP for SSH
+                ssh_host,
                 key_file=config.PEM_KEY_PATH
             )
             try:
@@ -305,7 +318,7 @@ class DeploymentOrchestrator:
                 update_progress('NGINX Installation',
                                'Installing NGINX reverse proxy', 'in_progress')
                 nginx_manager = NginxManager(
-                    instance_info['public_ip'],      # use private IP for SSH
+                    ssh_host,
                     key_file=config.PEM_KEY_PATH
                 )
                 try:
@@ -328,7 +341,7 @@ class DeploymentOrchestrator:
             update_progress('Repository Clone', 'Cloning GitHub repository', 'in_progress')
 
             github_manager = GitHubManager(
-                instance_info['public_ip'],      # use private IP for SSH
+                ssh_host,
                 key_file=config.PEM_KEY_PATH
             )
             try:
@@ -443,7 +456,7 @@ class DeploymentOrchestrator:
             # ── Step 9: Health check ──────────────────────────────────────────
             update_progress('Health Check', 'Performing health checks', 'in_progress')
 
-            health_checker = HealthChecker(instance_info['public_ip'], health_check_port)
+            health_checker = HealthChecker(ssh_host, health_check_port)
             is_healthy, health_msg = health_checker.wait_for_healthy(
                 max_retries=config.HEALTH_CHECK_RETRIES,
                 retry_interval=config.HEALTH_CHECK_INTERVAL,
