@@ -14,7 +14,17 @@ export default function ProgressTracker({
 }) {
     // Calculate progress percentage
     const completedSteps = steps.filter(s => s.status === 'success').length;
-    const progress = (completedSteps / DEPLOYMENT_STEPS.length) * 100;
+    const progress = status === 'success' ? 100 : (completedSteps / DEPLOYMENT_STEPS.length) * 100;
+
+    // Derive effective status locally as a safety net:
+    // • result?.success is set immediately when the WS deployment_complete event
+    //   fires — use it as the primary signal so the badge updates right away.
+    // • allSuccess + progress 100% is a secondary fallback.
+    const allSuccess = steps.length > 0 && steps.every(s => s.status === 'success');
+    const effectiveStatus = result?.success
+        ? 'success'
+        : (allSuccess && progress >= 100) ? 'success'
+        : status;
 
     const getStepIcon = (step) => {
         if (step.status === 'success') {
@@ -35,21 +45,21 @@ export default function ProgressTracker({
         (result.cancelled || result.error?.toLowerCase().includes('cancelled'));
 
     const getStatusBadge = () => {
-        if (status === 'success') {
+        if (effectiveStatus === 'success') {
             return (
                 <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-green-500/10 text-green-500 text-sm font-medium">
                     <CheckCircle2 className="w-4 h-4" />
                     <span>Deployment Successful</span>
                 </div>
             );
-        } else if (status === 'failed' && isCancelled) {
+        } else if (effectiveStatus === 'failed' && isCancelled) {
             return (
                 <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-orange-500/10 text-orange-500 text-sm font-medium">
                     <XCircle className="w-4 h-4" />
                     <span>Deployment Cancelled</span>
                 </div>
             );
-        } else if (status === 'failed') {
+        } else if (effectiveStatus === 'failed') {
             return (
                 <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-destructive/10 text-destructive text-sm font-medium">
                     <XCircle className="w-4 h-4" />
@@ -84,8 +94,8 @@ export default function ProgressTracker({
                     <div
                         className={cn(
                             "h-full transition-all duration-500 ease-out",
-                            status === 'success' ? 'bg-green-500' :
-                                status === 'failed' ? 'bg-destructive' :
+                            effectiveStatus === 'success' ? 'bg-green-500' :
+                                effectiveStatus === 'failed' ? 'bg-destructive' :
                                     'bg-primary'
                         )}
                         style={{ width: `${progress}%` }}

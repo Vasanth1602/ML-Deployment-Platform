@@ -285,7 +285,6 @@ class DeploymentOrchestrator:
             # Wait for SSH port to be open before using Paramiko
             wait_for_ssh(ssh_host)
             logger.info("SSH banner received. Waiting 10s for SSH daemon to strictly stabilize...")
-            import time
             time.sleep(10)   # give SSH daemon time to stabilize
 
             update_progress('Docker Installation',

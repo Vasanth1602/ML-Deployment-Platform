@@ -67,7 +67,14 @@ export default function Deploy() {
                 : 'in_progress';
 
         setDeploymentSteps(steps);
-        setDeploymentStatus(status);
+        setDeploymentStatus(prev => {
+            // Never downgrade from a terminal state back to in_progress
+            // (can happen if polling hits the DB before mark_success is committed)
+            if ((prev === 'success' || prev === 'failed') && status === 'in_progress') {
+                return prev;
+            }
+            return status;
+        });
         setIsDeploying(status === 'in_progress');
 
         if (status !== 'in_progress') {
@@ -107,7 +114,9 @@ export default function Deploy() {
     const startPolling = useCallback((id) => {
         if (pollingRef.current) return;   // already running
         pollingRef.current = setInterval(() => {
-            // Only poll when WebSocket is disconnected or unreliable
+            // Only poll when WebSocket is disconnected or unreliable.
+            // (Always-polling overwrites WS-only steps like 'Validation' which
+            //  are never persisted to the DB.)
             if (!socket.isConnected()) {
                 pollDeployment(id);
             }
@@ -432,15 +441,22 @@ export default function Deploy() {
                         </li>
                         <li className="flex items-start gap-2">
                             <span className="text-primary mt-0.5">•</span>
-                            <span>Repository must contain a <strong>Dockerfile</strong></span>
+                            <span>Repository must contain a <strong>Dockerfile</strong> at the root</span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                            <span className="text-primary mt-0.5">•</span>
+                            <span>
+                                If your ML app loads a trained model file (e.g. <strong>.pkl</strong>),
+                                include it in your repository — the simplest approach.
+                                Advanced: you can also download it inside your{' '}
+                                <code className="text-xs bg-secondary px-1 py-0.5 rounded">Dockerfile</code>{' '}
+                                (e.g. <code className="text-xs bg-secondary px-1 py-0.5 rounded">RUN wget ...</code>)
+                                or fetch it when your app starts — but if the file is missing, your app will crash
+                            </span>
                         </li>
                         <li className="flex items-start gap-2">
                             <span className="text-primary mt-0.5">•</span>
                             <span>Your application must listen on <strong>0.0.0.0</strong> (not 127.0.0.1)</span>
-                        </li>
-                        <li className="flex items-start gap-2">
-                            <span className="text-primary mt-0.5">•</span>
-                            <span>Ensure AWS credentials are configured in the backend</span>
                         </li>
                     </ul>
                 </div>

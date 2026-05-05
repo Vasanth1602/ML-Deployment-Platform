@@ -8,11 +8,11 @@
 // In local dev without Docker, set VITE_API_URL=http://localhost:5000 in .env.local
 export const API_BASE_URL = import.meta.env.VITE_API_URL ?? '';
 
-// Deployment Steps
+// Deployment Steps — must match step names emitted by deployment_orchestrator.py
 export const DEPLOYMENT_STEPS = [
     'Validation',
     'EC2 Creation',
-    'SSH Connection',
+    'EC2 Readiness',
     'Docker Installation',
     'NGINX Installation',
     'Repository Clone',

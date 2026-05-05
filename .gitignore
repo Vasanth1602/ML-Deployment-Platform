@@ -138,6 +138,7 @@ terraform.rc
 
 # Terraform docs
 /infrastructure/docs/*.md
+/infrastructure/docs/*.txt
 
 # NOTE: .terraform.lock.hcl is intentionally NOT ignored.
 #       Commit it — locks provider versions for all teammates + CI.

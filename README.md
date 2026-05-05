@@ -962,8 +962,20 @@ Typical duration: **3–5 minutes** end-to-end.
 
 Your GitHub repository must contain:
 
-1. **`Dockerfile`** — builds an image that listens on `0.0.0.0:8000`
-2. Application code that binds to `0.0.0.0` (not `127.0.0.1`)
+1. **`Dockerfile`** at the root — the platform runs `docker build` automatically
+2. Application code that binds to **`0.0.0.0`** (not `127.0.0.1`)
+
+### Trained Model File (`.pkl`, `.pt`, `.h5`, etc.)
+
+If your ML app loads a trained model file, that file must be **present inside the Docker container** when it starts. The platform only clones your GitHub repo — it has no other way to supply files. You have three options:
+
+| Option | How it works | Best for |
+|--------|-------------|----------|
+| **1. Commit to repo** | Add the `.pkl` to your GitHub repo → `COPY model.pkl .` in Dockerfile | Small models (< 100 MB) — simplest |
+| **2. Download in Dockerfile** | `RUN wget https://your-storage.com/model.pkl` during `docker build` | Models hosted on S3, GCS, or any public URL |
+| **3. Fetch at app startup** | App downloads the model on first request or startup (e.g. from HuggingFace Hub, S3) | Large models; keeps repo size small |
+
+> **⚠️ Important:** If the model file is missing when the container starts, your app will crash. Deployment will be marked as failed at the health-check step.
 
 ### Minimal Python example
 
@@ -1107,6 +1119,7 @@ Instead of `AmazonEC2FullAccess`, scope down to:
 - **Single-region deployment** — one AWS region at a time
 - **No background job queue** — deployments use threading rather than Celery
 - **No auto-scaling or load balancing** — each deploy is a standalone EC2 instance
+- **Model file must be self-supplied** — the platform clones your GitHub repo and builds the Docker image; it does not manage or upload model files (`.pkl`, `.pt`, `.h5`, etc.) separately. If your app requires a trained model, it must be included in the repo, downloaded via the `Dockerfile`, or fetched at container startup. Missing model files cause the app to crash after deployment.
 
 ---
 

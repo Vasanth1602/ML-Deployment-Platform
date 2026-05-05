@@ -31,7 +31,7 @@ def is_inside_aws():
             timeout=1
         )
         return True
-    except:
+    except Exception:
         return False
 
 
